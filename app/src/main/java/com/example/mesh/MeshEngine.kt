@@ -1,0 +1,521 @@
+package com.example.mesh
+
+import android.content.Context
+import android.util.Base64
+import android.util.Log
+import com.example.crypto.MeshCrypto
+import com.example.data.local.GhostMeshDatabase
+import com.example.data.local.entities.MessageEntity
+import com.example.data.local.entities.PacketLogEntity
+import com.example.data.model.DeliveryStatus
+import com.example.data.model.MeshNode
+import com.example.data.model.MeshPacket
+import com.example.data.model.PacketType
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
+import java.io.File
+import java.io.FileOutputStream
+import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
+
+class MeshEngine(
+    private val context: Context,
+    val identityManager: MeshIdentityManager,
+    private val database: GhostMeshDatabase
+) {
+    companion object {
+        private const val TAG = "MeshEngine"
+        private const val PACKET_CACHE_EXPIRY_MS = 10 * 60 * 1000L // 10 minutes cache
+    }
+
+    private val scope = CoroutineScope(Dispatchers.IO)
+    private val processedPacketCache = ConcurrentHashMap<String, Long>()
+
+    // Bluetooth manager
+    lateinit var bluetoothManager: BluetoothMeshManager
+        private set
+
+    // Simulator
+    lateinit var simulator: MeshSimulator
+        private set
+
+    private val _activeNodesMap = MutableStateFlow<Map<String, MeshNode>>(emptyMap())
+    val activeNodesMap: StateFlow<Map<String, MeshNode>> = _activeNodesMap.asStateFlow()
+
+    private val _relayedPacketsCount = MutableStateFlow(0)
+    val relayedPacketsCount: StateFlow<Int> = _relayedPacketsCount.asStateFlow()
+
+    private val _deliveredPacketsCount = MutableStateFlow(0)
+    val deliveredPacketsCount: StateFlow<Int> = _deliveredPacketsCount.asStateFlow()
+
+    init {
+        initSubsystems()
+    }
+
+    private fun initSubsystems() {
+        bluetoothManager = BluetoothMeshManager(
+            context = context,
+            identityManager = identityManager,
+            onPacketReceived = { packet -> onIncomingPacket(packet) }
+        )
+
+        simulator = MeshSimulator(
+            identityManager = identityManager,
+            onSimulatedPacketForLocalNode = { packet -> onIncomingPacket(packet) },
+            onSimulatedRelayLog = { src, dst, hops, ttl, action ->
+                recordPacketLog(
+                    packetId = UUID.randomUUID().toString(),
+                    src = src,
+                    dst = dst,
+                    type = "MULTI_HOP_FORWARD",
+                    action = action,
+                    hops = hops,
+                    ttl = ttl,
+                    size = 128
+                )
+            }
+        )
+
+        // Observe discovered nodes from bluetooth
+        scope.launch {
+            bluetoothManager.discoveredNodes.collect { btNodes ->
+                syncNodes(btNodes)
+            }
+        }
+
+        refreshNodesWithSimulator()
+    }
+
+    fun refreshNodesWithSimulator() {
+        val nodes = mutableMapOf<String, MeshNode>()
+        if (identityManager.isSimulatorEnabled) {
+            simulator.getVirtualNodes().forEach {
+                nodes[it.nodeId] = it
+            }
+        }
+        bluetoothManager.discoveredNodes.value.forEach { (id, node) ->
+            nodes[id] = node
+        }
+        _activeNodesMap.value = nodes
+    }
+
+    private fun syncNodes(btNodes: Map<String, MeshNode>) {
+        val merged = mutableMapOf<String, MeshNode>()
+        if (identityManager.isSimulatorEnabled) {
+            simulator.getVirtualNodes().forEach {
+                merged[it.nodeId] = it
+            }
+        }
+        merged.putAll(btNodes)
+        _activeNodesMap.value = merged
+    }
+
+    /**
+     * Core Store-and-Forward Mesh Routing Algorithm
+     */
+    fun onIncomingPacket(packet: MeshPacket) {
+        val now = System.currentTimeMillis()
+
+        // 1. Loop Prevention: Drop if packet was already seen
+        if (processedPacketCache.containsKey(packet.packetId)) {
+            recordPacketLog(
+                packetId = packet.packetId,
+                src = packet.sourceNodeId,
+                dst = packet.destNodeId,
+                type = packet.type.name,
+                action = "DROPPED_DUPLICATE",
+                hops = packet.hopCount,
+                ttl = packet.ttl,
+                size = packet.encryptedPayload.length
+            )
+            return
+        }
+
+        // Add to deduplication cache
+        processedPacketCache[packet.packetId] = now
+        cleanupOldPacketCache(now)
+
+        val localId = identityManager.nodeId
+
+        // 2. Destination check
+        when {
+            // Is it an ACK for one of our sent messages?
+            packet.type == PacketType.ACK && packet.destNodeId == localId -> {
+                handleAckPacket(packet)
+            }
+
+            // Is it directly for our node?
+            packet.destNodeId == localId -> {
+                handlePacketForLocalNode(packet)
+            }
+
+            // Is it a Broadcast packet for everyone?
+            packet.destNodeId == MeshPacket.BROADCAST_DEST -> {
+                handleBroadcastPacket(packet)
+            }
+
+            // Intermediate Store-and-Forward Relay (Packet is for another node!)
+            else -> {
+                forwardPacketAsRelay(packet)
+            }
+        }
+    }
+
+    private fun handleAckPacket(packet: MeshPacket) {
+        val originalPacketId = packet.encryptedPayload
+        scope.launch {
+            database.messageDao().updateMessageStatus(originalPacketId, DeliveryStatus.DELIVERED)
+            recordPacketLog(
+                packetId = packet.packetId,
+                src = packet.sourceNodeId,
+                dst = packet.destNodeId,
+                type = PacketType.ACK.name,
+                action = "ACK_CONFIRMED",
+                hops = packet.hopCount,
+                ttl = packet.ttl,
+                size = 32
+            )
+        }
+    }
+
+    private fun handlePacketForLocalNode(packet: MeshPacket) {
+        _deliveredPacketsCount.value += 1
+        recordPacketLog(
+            packetId = packet.packetId,
+            src = packet.sourceNodeId,
+            dst = packet.destNodeId,
+            type = packet.type.name,
+            action = "DELIVERED_TO_ME",
+            hops = packet.hopCount,
+            ttl = packet.ttl,
+            size = packet.encryptedPayload.length
+        )
+
+        scope.launch {
+            // E2E AES decryption using derived conversation key
+            val secretKey = MeshCrypto.deriveChatKey(identityManager.nodeId, packet.sourceNodeId)
+
+            when (packet.type) {
+                PacketType.TEXT -> {
+                    val decryptedText = MeshCrypto.decryptString(packet.encryptedPayload, packet.iv, secretKey)
+                    if (decryptedText != null) {
+                        val messageEntity = MessageEntity(
+                            packetId = packet.packetId,
+                            conversationId = packet.sourceNodeId, // Direct chat
+                            senderNodeId = packet.sourceNodeId,
+                            senderDisplayName = packet.senderDisplayName.ifBlank { packet.sourceNodeId },
+                            recipientNodeId = identityManager.nodeId,
+                            isOutgoing = false,
+                            text = decryptedText,
+                            audioFilePath = null,
+                            audioDurationSec = 0,
+                            timestamp = packet.timestamp,
+                            status = DeliveryStatus.DELIVERED,
+                            hopCount = packet.hopCount,
+                            isEncrypted = true
+                        )
+                        database.messageDao().insertMessage(messageEntity)
+                    }
+                }
+
+                PacketType.AUDIO -> {
+                    val decryptedAudioBytes = MeshCrypto.decryptBytes(packet.encryptedPayload, packet.iv, secretKey)
+                    if (decryptedAudioBytes != null) {
+                        val audioFile = saveAudioToCache(packet.packetId, decryptedAudioBytes)
+                        val messageEntity = MessageEntity(
+                            packetId = packet.packetId,
+                            conversationId = packet.sourceNodeId,
+                            senderNodeId = packet.sourceNodeId,
+                            senderDisplayName = packet.senderDisplayName.ifBlank { packet.sourceNodeId },
+                            recipientNodeId = identityManager.nodeId,
+                            isOutgoing = false,
+                            text = null,
+                            audioFilePath = audioFile.absolutePath,
+                            audioDurationSec = 5,
+                            timestamp = packet.timestamp,
+                            status = DeliveryStatus.DELIVERED,
+                            hopCount = packet.hopCount,
+                            isEncrypted = true
+                        )
+                        database.messageDao().insertMessage(messageEntity)
+                    }
+                }
+                else -> {}
+            }
+
+            // Send back ACK
+            sendAckBack(packet.sourceNodeId, packet.packetId)
+        }
+    }
+
+    private fun handleBroadcastPacket(packet: MeshPacket) {
+        _deliveredPacketsCount.value += 1
+        recordPacketLog(
+            packetId = packet.packetId,
+            src = packet.sourceNodeId,
+            dst = packet.destNodeId,
+            type = packet.type.name,
+            action = "DELIVERED_BROADCAST",
+            hops = packet.hopCount,
+            ttl = packet.ttl,
+            size = packet.encryptedPayload.length
+        )
+
+        scope.launch {
+            // Decrypt with broadcast group key
+            val groupKey = MeshCrypto.getBroadcastKey()
+            when (packet.type) {
+                PacketType.TEXT -> {
+                    val decryptedText = MeshCrypto.decryptString(packet.encryptedPayload, packet.iv, groupKey)
+                    if (decryptedText != null) {
+                        val messageEntity = MessageEntity(
+                            packetId = packet.packetId,
+                            conversationId = MeshPacket.BROADCAST_DEST,
+                            senderNodeId = packet.sourceNodeId,
+                            senderDisplayName = packet.senderDisplayName.ifBlank { packet.sourceNodeId },
+                            recipientNodeId = MeshPacket.BROADCAST_DEST,
+                            isOutgoing = (packet.sourceNodeId == identityManager.nodeId),
+                            text = decryptedText,
+                            audioFilePath = null,
+                            audioDurationSec = 0,
+                            timestamp = packet.timestamp,
+                            status = DeliveryStatus.DELIVERED,
+                            hopCount = packet.hopCount,
+                            isEncrypted = true
+                        )
+                        database.messageDao().insertMessage(messageEntity)
+                    }
+                }
+                PacketType.AUDIO -> {
+                    val decryptedAudioBytes = MeshCrypto.decryptBytes(packet.encryptedPayload, packet.iv, groupKey)
+                    if (decryptedAudioBytes != null) {
+                        val audioFile = saveAudioToCache(packet.packetId, decryptedAudioBytes)
+                        val messageEntity = MessageEntity(
+                            packetId = packet.packetId,
+                            conversationId = MeshPacket.BROADCAST_DEST,
+                            senderNodeId = packet.sourceNodeId,
+                            senderDisplayName = packet.senderDisplayName.ifBlank { packet.sourceNodeId },
+                            recipientNodeId = MeshPacket.BROADCAST_DEST,
+                            isOutgoing = (packet.sourceNodeId == identityManager.nodeId),
+                            text = null,
+                            audioFilePath = audioFile.absolutePath,
+                            audioDurationSec = 5,
+                            timestamp = packet.timestamp,
+                            status = DeliveryStatus.DELIVERED,
+                            hopCount = packet.hopCount,
+                            isEncrypted = true
+                        )
+                        database.messageDao().insertMessage(messageEntity)
+                    }
+                }
+                else -> {}
+            }
+
+            // Also repeat/relay the broadcast to other peers if TTL > 1 and auto-relay enabled
+            if (identityManager.isAutoRelayEnabled && packet.ttl > 1 && packet.sourceNodeId != identityManager.nodeId) {
+                val relayPacket = packet.copy(
+                    ttl = packet.ttl - 1,
+                    hopCount = packet.hopCount + 1
+                )
+                forwardOverRadio(relayPacket)
+            }
+        }
+    }
+
+    private fun forwardPacketAsRelay(packet: MeshPacket) {
+        if (!identityManager.isAutoRelayEnabled) {
+            recordPacketLog(
+                packetId = packet.packetId,
+                src = packet.sourceNodeId,
+                dst = packet.destNodeId,
+                type = packet.type.name,
+                action = "RELAY_DISABLED_DROPPED",
+                hops = packet.hopCount,
+                ttl = packet.ttl,
+                size = packet.encryptedPayload.length
+            )
+            return
+        }
+
+        if (packet.ttl <= 1) {
+            recordPacketLog(
+                packetId = packet.packetId,
+                src = packet.sourceNodeId,
+                dst = packet.destNodeId,
+                type = packet.type.name,
+                action = "DROPPED_TTL_EXPIRED",
+                hops = packet.hopCount,
+                ttl = 0,
+                size = packet.encryptedPayload.length
+            )
+            return
+        }
+
+        // Intermediate relay: Decrement TTL, increment Hop Count
+        val forwardedPacket = packet.copy(
+            ttl = packet.ttl - 1,
+            hopCount = packet.hopCount + 1
+        )
+
+        _relayedPacketsCount.value += 1
+        recordPacketLog(
+            packetId = forwardedPacket.packetId,
+            src = forwardedPacket.sourceNodeId,
+            dst = forwardedPacket.destNodeId,
+            type = forwardedPacket.type.name,
+            action = "STORE_AND_FORWARD_RELAYED",
+            hops = forwardedPacket.hopCount,
+            ttl = forwardedPacket.ttl,
+            size = forwardedPacket.encryptedPayload.length
+        )
+
+        forwardOverRadio(forwardedPacket)
+    }
+
+    private fun forwardOverRadio(packet: MeshPacket) {
+        bluetoothManager.sendPacketOverBluetooth(packet)
+        if (identityManager.isSimulatorEnabled) {
+            simulator.processOutgoingPacket(packet)
+        }
+    }
+
+    /**
+     * Sends a new outgoing packet originated by the local node
+     */
+    fun sendOutgoingPacket(
+        destNodeId: String,
+        type: PacketType,
+        plainBytesOrText: ByteArray,
+        durationSec: Int = 0,
+        localAudioFilePath: String? = null
+    ): String {
+        val packetId = UUID.randomUUID().toString()
+        val isBroadcast = (destNodeId == MeshPacket.BROADCAST_DEST)
+
+        // 1. Encrypt with E2E AES
+        val key = if (isBroadcast) {
+            MeshCrypto.getBroadcastKey()
+        } else {
+            MeshCrypto.deriveChatKey(identityManager.nodeId, destNodeId)
+        }
+
+        val (cipher, iv) = MeshCrypto.encryptBytes(plainBytesOrText, key)
+
+        val packet = MeshPacket(
+            packetId = packetId,
+            sourceNodeId = identityManager.nodeId,
+            destNodeId = destNodeId,
+            ttl = identityManager.maxTtl,
+            hopCount = 0,
+            type = type,
+            encryptedPayload = cipher,
+            iv = iv,
+            timestamp = System.currentTimeMillis(),
+            senderDisplayName = identityManager.userName
+        )
+
+        // Add to deduplication cache so we don't re-process our own packet
+        processedPacketCache[packetId] = System.currentTimeMillis()
+
+        // 2. Persist in Room DB as outgoing message
+        scope.launch {
+            val messageEntity = MessageEntity(
+                packetId = packetId,
+                conversationId = destNodeId,
+                senderNodeId = identityManager.nodeId,
+                senderDisplayName = identityManager.userName,
+                recipientNodeId = destNodeId,
+                isOutgoing = true,
+                text = if (type == PacketType.TEXT) String(plainBytesOrText, Charsets.UTF_8) else null,
+                audioFilePath = localAudioFilePath,
+                audioDurationSec = durationSec,
+                timestamp = packet.timestamp,
+                status = DeliveryStatus.SENT,
+                hopCount = 0,
+                isEncrypted = true
+            )
+            database.messageDao().insertMessage(messageEntity)
+
+            recordPacketLog(
+                packetId = packetId,
+                src = identityManager.nodeId,
+                dst = destNodeId,
+                type = type.name,
+                action = "ORIGINATED_BY_ME",
+                hops = 0,
+                ttl = packet.ttl,
+                size = cipher.length
+            )
+
+            // 3. Dispatch to radio & simulator
+            forwardOverRadio(packet)
+        }
+
+        return packetId
+    }
+
+    private fun sendAckBack(destNodeId: String, originalPacketId: String) {
+        val ackPacket = MeshPacket(
+            packetId = UUID.randomUUID().toString(),
+            sourceNodeId = identityManager.nodeId,
+            destNodeId = destNodeId,
+            ttl = identityManager.maxTtl,
+            hopCount = 0,
+            type = PacketType.ACK,
+            encryptedPayload = originalPacketId,
+            iv = "",
+            senderDisplayName = identityManager.userName
+        )
+        forwardOverRadio(ackPacket)
+    }
+
+    private fun saveAudioToCache(packetId: String, bytes: ByteArray): File {
+        val audioDir = File(context.cacheDir, "audio_notes")
+        if (!audioDir.exists()) audioDir.mkdirs()
+        val file = File(audioDir, "mesh_audio_$packetId.m4a")
+        FileOutputStream(file).use { it.write(bytes) }
+        return file
+    }
+
+    private fun recordPacketLog(
+        packetId: String,
+        src: String,
+        dst: String,
+        type: String,
+        action: String,
+        hops: Int,
+        ttl: Int,
+        size: Int
+    ) {
+        scope.launch {
+            val log = PacketLogEntity(
+                packetId = packetId,
+                sourceNodeId = src,
+                destNodeId = dst,
+                packetType = type,
+                action = action,
+                hopCount = hops,
+                remainingTtl = ttl,
+                payloadSize = size,
+                timestamp = System.currentTimeMillis()
+            )
+            database.packetLogDao().insertLog(log)
+        }
+    }
+
+    private fun cleanupOldPacketCache(now: Long) {
+        if (processedPacketCache.size > 500) {
+            val iterator = processedPacketCache.entries.iterator()
+            while (iterator.hasNext()) {
+                val entry = iterator.next()
+                if (now - entry.value > PACKET_CACHE_EXPIRY_MS) {
+                    iterator.remove()
+                }
+            }
+        }
+    }
+}

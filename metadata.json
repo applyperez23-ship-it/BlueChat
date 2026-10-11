@@ -1,0 +1,6 @@
+{
+  "name": "BlueChat",
+  "description": "Mensajería descentralizada y cifrada sin conexión a internet mediante red mallada Bluetooth (multi-hop).",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
