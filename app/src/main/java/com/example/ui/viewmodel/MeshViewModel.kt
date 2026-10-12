@@ -88,6 +88,7 @@ class MeshViewModel(application: Application) : AndroidViewModel(application) {
     private var recordingTimerJob: Job? = null
 
     // Dialogs
+    val showNewChatDialog = MutableStateFlow(false)
     val showAddContactNode = MutableStateFlow<MeshNode?>(null)
     val showWipeConfirmDialog = MutableStateFlow(false)
     val showClearChatConfirmDialog = MutableStateFlow(false)
@@ -125,6 +126,59 @@ class MeshViewModel(application: Application) : AndroidViewModel(application) {
                 _activeChatMessages.value = msgs
             }
         }
+    }
+
+    fun startChatWithUsernameOrId(input: String) {
+        val clean = input.trim()
+        if (clean.isBlank()) return
+
+        // 1. Check if user typed an existing contact's alias or original name
+        val matchedContact = contacts.value.firstOrNull {
+            it.customAlias.equals(clean, ignoreCase = true) ||
+            it.originalDisplayName.equals(clean, ignoreCase = true) ||
+            it.nodeId.equals(clean, ignoreCase = true)
+        }
+        if (matchedContact != null) {
+            val node = MeshNode(
+                nodeId = matchedContact.nodeId,
+                displayName = matchedContact.originalDisplayName,
+                macHash = matchedContact.macHash,
+                customAlias = matchedContact.customAlias
+            )
+            openChat(matchedContact.nodeId, node)
+            showNewChatDialog.value = false
+            return
+        }
+
+        // 2. Check if user typed an active nearby node's name
+        val matchedActiveNode = activeNodes.value.values.firstOrNull {
+            it.effectiveName.equals(clean, ignoreCase = true) ||
+            it.displayName.equals(clean, ignoreCase = true) ||
+            it.nodeId.equals(clean, ignoreCase = true)
+        }
+        if (matchedActiveNode != null) {
+            openChat(matchedActiveNode.nodeId, matchedActiveNode)
+            showNewChatDialog.value = false
+            return
+        }
+
+        // 3. New contact by username or ID
+        val (hash, name) = if (clean.contains("#")) {
+            MeshNode.parseNodeId(clean)
+        } else {
+            // Generate clean hash from name
+            val generatedHash = java.lang.Integer.toHexString(clean.hashCode()).takeLast(6).uppercase()
+            Pair(generatedHash, clean)
+        }
+        val targetNodeId = if (clean.contains("#")) clean else "$hash#$name"
+
+        val newNode = MeshNode(
+            nodeId = targetNodeId,
+            displayName = name,
+            macHash = hash
+        )
+        openChat(targetNodeId, newNode)
+        showNewChatDialog.value = false
     }
 
     fun closeChat() {

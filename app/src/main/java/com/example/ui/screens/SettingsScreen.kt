@@ -1,6 +1,7 @@
 package com.example.ui.screens
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -17,25 +18,23 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.AltRoute
-import androidx.compose.material.icons.filled.Badge
 import androidx.compose.material.icons.filled.Bluetooth
 import androidx.compose.material.icons.filled.DeleteForever
 import androidx.compose.material.icons.filled.Edit
-import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Hub
 import androidx.compose.material.icons.filled.Lock
-import androidx.compose.material.icons.filled.Science
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.ElevatedButton
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
@@ -62,10 +61,10 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.example.ui.components.HardwareHashBadge
-import com.example.ui.theme.GhostCyan
-import com.example.ui.theme.GhostGreen
-import com.example.ui.theme.GhostRed
+import com.example.ui.theme.BlueChatGreen
+import com.example.ui.theme.BlueChatPrimary
+import com.example.ui.theme.BlueChatRed
+import com.example.ui.viewmodel.MeshTab
 import com.example.ui.viewmodel.MeshViewModel
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -78,7 +77,6 @@ fun SettingsScreen(
     val nodeId by viewModel.nodeId.collectAsState()
     val maxTtl by viewModel.maxTtl.collectAsState()
     val isAutoRelay by viewModel.isAutoRelay.collectAsState()
-    val isSimulatorEnabled by viewModel.isSimulatorEnabled.collectAsState()
     val isBtEnabled by viewModel.isBluetoothEnabled.collectAsState()
     val showWipeDialog by viewModel.showWipeConfirmDialog.collectAsState()
     val showEditIdentity by viewModel.showEditIdentityDialog.collectAsState()
@@ -92,7 +90,7 @@ fun SettingsScreen(
             TopAppBar(
                 title = {
                     Text(
-                        text = "Ajustes de Malla y Privacidad",
+                        text = "Ajustes",
                         style = MaterialTheme.typography.titleLarge,
                         fontWeight = FontWeight.Bold
                     )
@@ -110,151 +108,171 @@ fun SettingsScreen(
                 .padding(horizontal = 16.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
-            // Identity Section
+            // Profile Card
+            item {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(18.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant
+                    )
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(16.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Box(
+                                modifier = Modifier
+                                    .size(52.dp)
+                                    .clip(CircleShape)
+                                    .background(BlueChatPrimary),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    text = userName.take(1).uppercase(),
+                                    fontSize = 22.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color.White
+                                )
+                            }
+                            Spacer(modifier = Modifier.width(14.dp))
+                            Column {
+                                Text(
+                                    text = userName,
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Spacer(modifier = Modifier.height(2.dp))
+                                Text(
+                                    text = "ID: $nodeId",
+                                    fontFamily = FontFamily.Monospace,
+                                    fontSize = 11.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+
+                        IconButton(
+                            onClick = {
+                                editedNameText = userName
+                                viewModel.showEditIdentityDialog.value = true
+                            },
+                            modifier = Modifier.testTag("edit_identity_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Edit,
+                                contentDescription = "Editar nombre",
+                                tint = BlueChatPrimary
+                            )
+                        }
+                    }
+                }
+            }
+
+            // RED Y CONEXIÓN
             item {
                 Text(
-                    text = "IDENTIDAD DEL NODO",
+                    text = "RED Y ENRUTAMIENTO",
                     style = MaterialTheme.typography.labelSmall,
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    letterSpacing = 1.sp
+                    letterSpacing = 1.sp,
+                    modifier = Modifier.padding(top = 4.dp)
                 )
             }
 
             item {
                 Card(
                     modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(16.dp),
+                    shape = RoundedCornerShape(18.dp),
                     colors = CardDefaults.cardColors(
                         containerColor = MaterialTheme.colorScheme.surfaceVariant
                     )
                 ) {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(16.dp)
-                    ) {
+                    Column(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
+                        // Estado Bluetooth
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
-                                Box(
-                                    modifier = Modifier
-                                        .size(40.dp)
-                                        .clip(CircleShape)
-                                        .background(GhostCyan.copy(alpha = 0.2f)),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Default.Badge,
-                                        contentDescription = null,
-                                        tint = GhostCyan
-                                    )
-                                }
-                                Spacer(modifier = Modifier.width(12.dp))
+                                Icon(Icons.Default.Bluetooth, contentDescription = null, tint = BlueChatPrimary, modifier = Modifier.size(20.dp))
+                                Spacer(modifier = Modifier.width(10.dp))
                                 Column {
+                                    Text("Radio Bluetooth", fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
                                     Text(
-                                        text = userName,
-                                        style = MaterialTheme.typography.titleMedium,
-                                        fontWeight = FontWeight.Bold
-                                    )
-                                    Text(
-                                        text = "Nombre visible en la malla",
-                                        style = MaterialTheme.typography.bodySmall,
+                                        text = if (isBtEnabled) "Activo y disponible" else "Desactivado",
                                         fontSize = 11.sp,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        color = if (isBtEnabled) BlueChatGreen else MaterialTheme.colorScheme.onSurfaceVariant
                                     )
                                 }
                             }
 
-                            IconButton(
-                                onClick = {
-                                    editedNameText = userName
-                                    viewModel.showEditIdentityDialog.value = true
-                                },
-                                modifier = Modifier.testTag("edit_identity_button")
+                            Button(
+                                onClick = { viewModel.startMeshScan() },
+                                shape = RoundedCornerShape(10.dp),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = BlueChatPrimary,
+                                    contentColor = Color.White
+                                )
                             ) {
-                                Icon(Icons.Default.Edit, contentDescription = "Editar nombre", tint = GhostCyan)
+                                Text("Escanear", fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
                             }
                         }
 
-                        Spacer(modifier = Modifier.height(12.dp))
+                        Spacer(modifier = Modifier.height(14.dp))
+                        HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.15f))
+                        Spacer(modifier = Modifier.height(14.dp))
 
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clip(RoundedCornerShape(8.dp))
-                                .background(Color(0xFF0F172A))
-                                .padding(10.dp)
+                        // Modo Repetidor
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Column {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text("Modo Repetidor Automático", fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
                                 Text(
-                                    text = "ID Único de Hardware (anti-colisión):",
-                                    fontSize = 10.sp,
+                                    text = "Retransmite paquetes cifrados de otros teléfonos cercanos para extender la cobertura.",
+                                    fontSize = 11.sp,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
-                                Spacer(modifier = Modifier.height(2.dp))
-                                Text(
-                                    text = nodeId,
-                                    fontFamily = FontFamily.Monospace,
-                                    fontWeight = FontWeight.Bold,
-                                    fontSize = 13.sp,
-                                    color = GhostCyan
-                                )
                             }
+                            Switch(
+                                checked = isAutoRelay,
+                                onCheckedChange = { viewModel.toggleAutoRelay(it) },
+                                colors = SwitchDefaults.colors(
+                                    checkedThumbColor = BlueChatPrimary,
+                                    checkedTrackColor = BlueChatPrimary.copy(alpha = 0.4f)
+                                ),
+                                modifier = Modifier.testTag("auto_relay_switch")
+                            )
                         }
-                    }
-                }
-            }
 
-            // Mesh Routing Configuration
-            item {
-                Text(
-                    text = "CONFIGURACIÓN DEL PROTOCOLO MALLADO",
-                    style = MaterialTheme.typography.labelSmall,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    letterSpacing = 1.sp
-                )
-            }
+                        Spacer(modifier = Modifier.height(14.dp))
+                        HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.15f))
+                        Spacer(modifier = Modifier.height(14.dp))
 
-            item {
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(16.dp),
-                    colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.surfaceVariant
-                    )
-                ) {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(16.dp),
-                        verticalArrangement = Arrangement.spacedBy(14.dp)
-                    ) {
                         // Max TTL Slider
                         Column {
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
                                 horizontalArrangement = Arrangement.SpaceBetween
                             ) {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Icon(Icons.AutoMirrored.Filled.AltRoute, contentDescription = null, tint = GhostCyan, modifier = Modifier.size(18.dp))
-                                    Spacer(modifier = Modifier.width(8.dp))
-                                    Text("Límite TTL (Saltos Máximos)", fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
-                                }
+                                Text("Límite de Saltos (TTL)", fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
                                 Text(
                                     text = "${ttlSliderValue.toInt()} saltos",
                                     fontWeight = FontWeight.Bold,
-                                    fontFamily = FontFamily.Monospace,
-                                    color = GhostCyan
+                                    color = BlueChatPrimary
                                 )
                             }
-                            Spacer(modifier = Modifier.height(2.dp))
                             Text(
-                                text = "Evita bucles infinitos. Los paquetes mueren si superan este número de saltos.",
+                                text = "Número máximo de repetidores por mensaje.",
                                 fontSize = 11.sp,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -267,157 +285,162 @@ fun SettingsScreen(
                                 valueRange = 1f..10f,
                                 steps = 8,
                                 colors = SliderDefaults.colors(
-                                    thumbColor = GhostCyan,
-                                    activeTrackColor = GhostCyan
+                                    thumbColor = BlueChatPrimary,
+                                    activeTrackColor = BlueChatPrimary
                                 ),
                                 modifier = Modifier.testTag("ttl_slider")
-                            )
-                        }
-
-                        // Auto-Relay Toggle
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text("Modo Repetidor Automático", fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
-                                Text(
-                                    text = "Permite a tu teléfono retransmitir paquetes ajenos como nodo puente (store-and-forward).",
-                                    fontSize = 11.sp,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                            Switch(
-                                checked = isAutoRelay,
-                                onCheckedChange = { viewModel.toggleAutoRelay(it) },
-                                colors = SwitchDefaults.colors(checkedThumbColor = GhostCyan, checkedTrackColor = GhostCyan.copy(alpha = 0.5f)),
-                                modifier = Modifier.testTag("auto_relay_switch")
-                            )
-                        }
-
-                        // Simulator Mode Toggle
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Icon(Icons.Default.Science, contentDescription = null, tint = GhostGreen, modifier = Modifier.size(16.dp))
-                                    Spacer(modifier = Modifier.width(6.dp))
-                                    Text("Simulador de Nodos Virtuales", fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
-                                }
-                                Text(
-                                    text = "Genera repetidores de prueba para ensayar saltos y cifrado en emuladores.",
-                                    fontSize = 11.sp,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                            Switch(
-                                checked = isSimulatorEnabled,
-                                onCheckedChange = { viewModel.toggleSimulator(it) },
-                                colors = SwitchDefaults.colors(checkedThumbColor = GhostGreen, checkedTrackColor = GhostGreen.copy(alpha = 0.5f)),
-                                modifier = Modifier.testTag("simulator_switch")
                             )
                         }
                     }
                 }
             }
 
-            // Security & Danger Zone
+            // HERRAMIENTAS DE RED AVANZADAS
             item {
                 Text(
-                    text = "ZONA DE PRIVACIDAD Y SEGURIDAD",
+                    text = "HERRAMIENTAS DE RED",
                     style = MaterialTheme.typography.labelSmall,
                     fontWeight = FontWeight.Bold,
-                    color = GhostRed,
-                    letterSpacing = 1.sp
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    letterSpacing = 1.sp,
+                    modifier = Modifier.padding(top = 4.dp)
                 )
             }
 
             item {
                 Card(
                     modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(16.dp),
+                    shape = RoundedCornerShape(18.dp),
                     colors = CardDefaults.cardColors(
                         containerColor = MaterialTheme.colorScheme.surfaceVariant
                     )
                 ) {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(16.dp)
-                    ) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(Icons.Default.Security, contentDescription = null, tint = GhostRed, modifier = Modifier.size(20.dp))
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text("Borrado Definitivo y Modo Pánico", fontWeight = FontWeight.Bold, fontSize = 14.sp)
-                        }
-
-                        Spacer(modifier = Modifier.height(4.dp))
-
-                        Text(
-                            text = "Purga de forma irrecuperable todas las tablas SQLite de mensajes, contactos guardados y notas de voz temporales del almacenamiento local.",
-                            fontSize = 11.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-
-                        Spacer(modifier = Modifier.height(12.dp))
-
-                        ElevatedButton(
-                            onClick = { viewModel.showWipeConfirmDialog.value = true },
-                            colors = ButtonDefaults.elevatedButtonColors(
-                                containerColor = GhostRed,
-                                contentColor = Color.White
-                            ),
-                            shape = RoundedCornerShape(8.dp),
+                    Column {
+                        // Acceso a Topología
+                        Row(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .testTag("secure_wipe_button")
+                                .clickable { viewModel.selectTab(MeshTab.TOPOLOGY) }
+                                .padding(16.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
                         ) {
-                            Icon(Icons.Default.DeleteForever, contentDescription = null, modifier = Modifier.size(18.dp))
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text("Borrado Seguro de Toda la Base de Datos", fontWeight = FontWeight.Bold)
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(Icons.Default.Hub, contentDescription = null, tint = BlueChatPrimary, modifier = Modifier.size(20.dp))
+                                Spacer(modifier = Modifier.width(12.dp))
+                                Column {
+                                    Text("Topología de la Red", fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
+                                    Text("Ver mapa visual de nodos y conexiones", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
+                            }
+                            Text("Ver", fontSize = 12.sp, color = BlueChatPrimary, fontWeight = FontWeight.Bold)
+                        }
+
+                        HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.15f))
+
+                        // Acceso a Monitor de Paquetes
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { viewModel.selectTab(MeshTab.LOGS) }
+                                .padding(16.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(Icons.AutoMirrored.Filled.AltRoute, contentDescription = null, tint = BlueChatPrimary, modifier = Modifier.size(20.dp))
+                                Spacer(modifier = Modifier.width(12.dp))
+                                Column {
+                                    Text("Monitor de Tráfico", fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
+                                    Text("Registro de paquetes y retransmisiones", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
+                            }
+                            Text("Ver", fontSize = 12.sp, color = BlueChatPrimary, fontWeight = FontWeight.Bold)
                         }
                     }
                 }
             }
 
-            // Technical Architecture Explainer
+            // PRIVACIDAD Y SEGURIDAD
+            item {
+                Text(
+                    text = "PRIVACIDAD Y ALMACENAMIENTO",
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = BlueChatRed,
+                    letterSpacing = 1.sp,
+                    modifier = Modifier.padding(top = 4.dp)
+                )
+            }
+
             item {
                 Card(
                     modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(16.dp),
+                    shape = RoundedCornerShape(18.dp),
                     colors = CardDefaults.cardColors(
-                        containerColor = Color(0xFF0F172A)
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant
                     )
                 ) {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(14.dp)
-                    ) {
+                    Column(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(Icons.Default.Info, contentDescription = null, tint = GhostCyan, modifier = Modifier.size(18.dp))
+                            Icon(Icons.Default.Security, contentDescription = null, tint = BlueChatRed, modifier = Modifier.size(20.dp))
                             Spacer(modifier = Modifier.width(8.dp))
-                            Text("Protocolo BlueChat", fontWeight = FontWeight.Bold, fontSize = 13.sp, color = Color.White)
+                            Text("Borrado Seguro de Emergencia", fontWeight = FontWeight.Bold, fontSize = 14.sp)
                         }
-                        Spacer(modifier = Modifier.height(6.dp))
+                        Spacer(modifier = Modifier.height(4.dp))
                         Text(
-                            text = "• Cifrado E2E: AES-256 (CBC/PKCS5) extremo a extremo. Los repetidores intermedios solo ven el ID del destino, no pueden leer los mensajes ni audios.\n" +
-                                   "• Sin Internet: Enrutamiento hop-by-hop a través de sockets RFCOMM y balizas BLE.\n" +
-                                   "• Anti-Storm: Deduplicación por hash de paquete y decremento de TTL en cada salto.",
+                            text = "Elimina permanentemente todos los chats, contactos y notas de voz almacenadas en este dispositivo.",
                             fontSize = 11.sp,
-                            color = Color(0xFF94A3B8),
-                            lineHeight = 16.sp
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(modifier = Modifier.height(14.dp))
+                        Button(
+                            onClick = { viewModel.showWipeConfirmDialog.value = true },
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = BlueChatRed,
+                                contentColor = Color.White
+                            ),
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(46.dp)
+                                .testTag("secure_wipe_button")
+                        ) {
+                            Icon(Icons.Default.DeleteForever, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Borrar toda la información local", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                        }
+                    }
+                }
+            }
+
+            // INFO
+            item {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(18.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                    )
+                ) {
+                    Column(modifier = Modifier.fillMaxWidth().padding(14.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Default.Lock, contentDescription = null, tint = BlueChatGreen, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Cifrado Extremo a Extremo", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                        }
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = "Tus mensajes y notas de voz se cifran con AES-256 en tu teléfono y solo el destinatario los puede descifrar.",
+                            fontSize = 11.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
                 }
             }
 
             item {
-                Spacer(modifier = Modifier.height(30.dp))
+                Spacer(modifier = Modifier.height(40.dp))
             }
         }
     }
@@ -426,11 +449,11 @@ fun SettingsScreen(
     if (showEditIdentity) {
         AlertDialog(
             onDismissRequest = { viewModel.showEditIdentityDialog.value = false },
-            title = { Text("Editar Nombre de Usuario") },
+            title = { Text("Editar Nombre", fontWeight = FontWeight.Bold) },
             text = {
                 Column {
                     Text(
-                        text = "Tu nombre visible en la red mallada. Se combinará con tu hash de hardware permanente.",
+                        text = "Elige tu nombre visible para los demás contactos en la red:",
                         fontSize = 12.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -439,6 +462,7 @@ fun SettingsScreen(
                         value = editedNameText,
                         onValueChange = { editedNameText = it },
                         singleLine = true,
+                        shape = RoundedCornerShape(12.dp),
                         modifier = Modifier
                             .fillMaxWidth()
                             .testTag("edit_name_text_field")
@@ -450,7 +474,7 @@ fun SettingsScreen(
                     onClick = { viewModel.updateUserName(editedNameText) },
                     modifier = Modifier.testTag("save_name_button")
                 ) {
-                    Text("Guardar", color = GhostCyan)
+                    Text("Guardar", color = BlueChatPrimary, fontWeight = FontWeight.Bold)
                 }
             },
             dismissButton = {
@@ -465,18 +489,19 @@ fun SettingsScreen(
     if (showWipeDialog) {
         AlertDialog(
             onDismissRequest = { viewModel.showWipeConfirmDialog.value = false },
-            icon = { Icon(Icons.Default.Warning, contentDescription = null, tint = GhostRed, modifier = Modifier.size(36.dp)) },
-            title = { Text("¿Confirmar Borrado de Emergencia?") },
+            icon = { Icon(Icons.Default.Warning, contentDescription = null, tint = BlueChatRed, modifier = Modifier.size(36.dp)) },
+            title = { Text("¿Eliminar todos los datos?", fontWeight = FontWeight.Bold) },
             text = {
-                Text("Esta acción eliminará de forma irreversible todas las conversaciones, audios y contactos almacenados en este dispositivo. No se puede deshacer.")
+                Text("Esta acción borrará definitivamente todas tus conversaciones, notas de voz y contactos guardados. No se puede revertir.")
             },
             confirmButton = {
-                ElevatedButton(
+                Button(
                     onClick = { viewModel.wipeDatabaseSecurely() },
-                    colors = ButtonDefaults.elevatedButtonColors(containerColor = GhostRed, contentColor = Color.White),
+                    colors = ButtonDefaults.buttonColors(containerColor = BlueChatRed, contentColor = Color.White),
+                    shape = RoundedCornerShape(10.dp),
                     modifier = Modifier.testTag("confirm_wipe_button")
                 ) {
-                    Text("Confirmar y Borrar Todo")
+                    Text("Confirmar Borrado")
                 }
             },
             dismissButton = {

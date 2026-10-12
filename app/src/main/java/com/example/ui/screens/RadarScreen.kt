@@ -20,14 +20,13 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Chat
 import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.BookmarkAdd
-import androidx.compose.material.icons.filled.NearMe
 import androidx.compose.material.icons.filled.Radar
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.SignalCellularAlt
+import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.ElevatedButton
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -52,8 +51,8 @@ import androidx.compose.ui.unit.sp
 import com.example.data.model.MeshNode
 import com.example.ui.components.HardwareHashBadge
 import com.example.ui.components.HopIndicator
-import com.example.ui.theme.GhostCyan
-import com.example.ui.theme.GhostGreen
+import com.example.ui.theme.BlueChatGreen
+import com.example.ui.theme.BlueChatPrimary
 import com.example.ui.viewmodel.MeshViewModel
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -78,7 +77,7 @@ fun RadarScreen(
                             fontWeight = FontWeight.Bold
                         )
                         Text(
-                            text = "Escáner BLE y Radio Malla",
+                            text = if (isScanning) "Buscando en la red Bluetooth..." else "${activeNodes.size} dispositivos en rango",
                             style = MaterialTheme.typography.bodySmall,
                             fontSize = 11.sp,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -92,8 +91,8 @@ fun RadarScreen(
                     ) {
                         Icon(
                             imageVector = Icons.Default.Refresh,
-                            contentDescription = "Volver a escanear",
-                            tint = GhostCyan
+                            contentDescription = "Actualizar",
+                            tint = BlueChatPrimary
                         )
                     }
                 },
@@ -110,64 +109,66 @@ fun RadarScreen(
                 .padding(horizontal = 16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            // Radar visual header card
+            // Header card
             item {
                 Card(
                     modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(16.dp),
+                    shape = RoundedCornerShape(18.dp),
                     colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.surfaceVariant
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)
                     )
                 ) {
-                    Column(
+                    Row(
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(16.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
                         Box(
                             modifier = Modifier
-                                .size(72.dp)
+                                .size(50.dp)
                                 .clip(CircleShape)
-                                .background(GhostCyan.copy(alpha = 0.15f)),
+                                .background(BlueChatPrimary.copy(alpha = 0.12f)),
                             contentAlignment = Alignment.Center
                         ) {
                             Icon(
                                 imageVector = Icons.Default.Radar,
                                 contentDescription = null,
-                                tint = GhostCyan,
-                                modifier = Modifier.size(40.dp)
+                                tint = BlueChatPrimary,
+                                modifier = Modifier.size(26.dp)
                             )
                         }
 
-                        Spacer(modifier = Modifier.height(10.dp))
+                        Spacer(modifier = Modifier.width(14.dp))
 
-                        Text(
-                            text = if (isScanning) "Escaneando paquetes en rango..." else "${activeNodes.size} Dispositivos Detectados",
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 15.sp
-                        )
-
-                        Spacer(modifier = Modifier.height(4.dp))
-
-                        Text(
-                            text = "Los teléfonos cercanos operan como repetidores automáticos (multi-hop).",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            fontSize = 11.sp
-                        )
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Detección de Contactos",
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 14.sp
+                            )
+                            Spacer(modifier = Modifier.height(2.dp))
+                            Text(
+                                text = "Los teléfonos cercanos retransmiten tus mensajes de forma cifrada sin necesidad de Internet.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                fontSize = 11.sp
+                            )
+                        }
                     }
                 }
             }
 
             item {
                 Row(
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 4.dp),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = "NODOS ACTIVOS EN LA MALLA",
+                        text = "EN RANGO BLUETOOTH",
                         style = MaterialTheme.typography.labelSmall,
                         fontWeight = FontWeight.Bold,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -175,10 +176,10 @@ fun RadarScreen(
                     )
 
                     Text(
-                        text = "${activeNodes.size} Nodos",
+                        text = "${activeNodes.size} disponibles",
                         fontSize = 11.sp,
                         fontWeight = FontWeight.SemiBold,
-                        color = GhostCyan
+                        color = BlueChatPrimary
                     )
                 }
             }
@@ -187,6 +188,7 @@ fun RadarScreen(
                 item {
                     Card(
                         modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(14.dp),
                         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f))
                     ) {
                         Column(
@@ -196,7 +198,7 @@ fun RadarScreen(
                             horizontalAlignment = Alignment.CenterHorizontally
                         ) {
                             Text(
-                                text = "Buscando dispositivos...",
+                                text = "Buscando otros teléfonos cercanos...",
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -240,9 +242,9 @@ fun RadarNodeCard(
         modifier = Modifier
             .fillMaxWidth()
             .testTag("radar_node_card_${hash}"),
-        shape = RoundedCornerShape(12.dp),
+        shape = RoundedCornerShape(16.dp),
         colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceVariant
+            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f)
         )
     ) {
         Column(
@@ -260,7 +262,7 @@ fun RadarNodeCard(
                         modifier = Modifier
                             .size(10.dp)
                             .clip(CircleShape)
-                            .background(GhostGreen)
+                            .background(BlueChatGreen)
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
@@ -276,7 +278,7 @@ fun RadarNodeCard(
                     Icon(
                         imageVector = Icons.Default.SignalCellularAlt,
                         contentDescription = "RSSI",
-                        tint = GhostCyan,
+                        tint = BlueChatPrimary,
                         modifier = Modifier.size(14.dp)
                     )
                     Spacer(modifier = Modifier.width(2.dp))
@@ -299,7 +301,7 @@ fun RadarNodeCard(
                 HopIndicator(hopCount = node.hopDistance, isEncrypted = true)
 
                 Text(
-                    text = if (node.isDirectConnected) "Conexión Directa RFCOMM" else "Vía Salto Malla",
+                    text = if (node.isDirectConnected) "Conexión Directa" else "Por retransmisión",
                     fontSize = 11.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -313,7 +315,7 @@ fun RadarNodeCard(
             ) {
                 OutlinedButton(
                     onClick = onAddContact,
-                    shape = RoundedCornerShape(8.dp),
+                    shape = RoundedCornerShape(10.dp),
                     modifier = Modifier.testTag("add_contact_button_${hash}")
                 ) {
                     Icon(
@@ -330,13 +332,13 @@ fun RadarNodeCard(
 
                 Spacer(modifier = Modifier.width(8.dp))
 
-                ElevatedButton(
+                Button(
                     onClick = onOpenChat,
-                    colors = ButtonDefaults.elevatedButtonColors(
-                        containerColor = GhostCyan,
-                        contentColor = Color.Black
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = BlueChatPrimary,
+                        contentColor = Color.White
                     ),
-                    shape = RoundedCornerShape(8.dp),
+                    shape = RoundedCornerShape(10.dp),
                     modifier = Modifier.testTag("start_chat_button_${hash}")
                 ) {
                     Icon(Icons.AutoMirrored.Filled.Chat, contentDescription = null, modifier = Modifier.size(16.dp))

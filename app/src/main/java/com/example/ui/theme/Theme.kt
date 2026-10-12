@@ -12,49 +12,49 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 
 private val DarkColorScheme = darkColorScheme(
-    primary = GhostCyan,
-    onPrimary = Color(0xFF00363D),
-    primaryContainer = Color(0xFF004F58),
-    onPrimaryContainer = Color(0xFF97F0FF),
-    secondary = GhostPurple,
-    onSecondary = Color(0xFF381E72),
-    secondaryContainer = Color(0xFF4F378B),
-    onSecondaryContainer = Color(0xFFEADDFF),
-    tertiary = GhostGreen,
-    onTertiary = Color(0xFF003920),
-    background = GhostDarkBackground,
-    onBackground = Color(0xFFE2E8F0),
-    surface = GhostDarkSurface,
-    onSurface = Color(0xFFF1F5F9),
-    surfaceVariant = GhostDarkSurfaceVariant,
-    onSurfaceVariant = Color(0xFF94A3B8),
-    outline = GhostDarkBorder
+    primary = BlueChatPrimaryDark,
+    onPrimary = Color.White,
+    primaryContainer = Color(0xFF004080),
+    onPrimaryContainer = Color(0xFFD0E4FF),
+    secondary = BlueChatSecondary,
+    onSecondary = Color.White,
+    secondaryContainer = Color(0xFF282846),
+    onSecondaryContainer = Color(0xFFE4E4FF),
+    tertiary = BlueChatGreen,
+    onTertiary = Color.White,
+    background = DarkBackground,
+    onBackground = DarkOnSurface,
+    surface = DarkSurface,
+    onSurface = DarkOnSurface,
+    surfaceVariant = DarkSurfaceVariant,
+    onSurfaceVariant = DarkOnSurfaceVariant,
+    outline = DarkOutline
 )
 
 private val LightColorScheme = lightColorScheme(
-    primary = GhostCyanDim,
+    primary = BlueChatPrimary,
     onPrimary = Color.White,
-    primaryContainer = Color(0xFFE0F7FA),
-    onPrimaryContainer = Color(0xFF004D40),
-    secondary = GhostViolet,
+    primaryContainer = BlueChatPrimaryContainer,
+    onPrimaryContainer = BlueChatOnPrimaryContainer,
+    secondary = BlueChatSecondary,
     onSecondary = Color.White,
-    secondaryContainer = Color(0xFFF3E8FF),
-    onSecondaryContainer = Color(0xFF4C1D95),
-    tertiary = GhostGreen,
+    secondaryContainer = Color(0xFFEBEBFF),
+    onSecondaryContainer = Color(0xFF1D1B68),
+    tertiary = BlueChatGreen,
     onTertiary = Color.White,
-    background = GhostLightBackground,
-    onBackground = Color(0xFF0F172A),
-    surface = GhostLightSurface,
-    onSurface = Color(0xFF0F172A),
-    surfaceVariant = GhostLightSurfaceVariant,
-    onSurfaceVariant = Color(0xFF475569),
-    outline = GhostLightBorder
+    background = LightBackground,
+    onBackground = LightOnSurface,
+    surface = LightSurface,
+    onSurface = LightOnSurface,
+    surfaceVariant = LightSurfaceVariant,
+    onSurfaceVariant = LightOnSurfaceVariant,
+    outline = LightOutline
 )
 
 @Composable
-fun GhostMeshTheme(
+fun BlueChatTheme(
     darkTheme: Boolean = isSystemInDarkTheme(),
-    dynamicColor: Boolean = false, // Keep distinctive cyber mesh palette by default
+    dynamicColor: Boolean = true,
     content: @Composable () -> Unit
 ) {
     val colorScheme = when {
@@ -73,12 +73,21 @@ fun GhostMeshTheme(
     )
 }
 
-// Alias for compatibility with template
+// Aliases for compatibility
+@Composable
+fun GhostMeshTheme(
+    darkTheme: Boolean = isSystemInDarkTheme(),
+    dynamicColor: Boolean = true,
+    content: @Composable () -> Unit
+) {
+    BlueChatTheme(darkTheme = darkTheme, dynamicColor = dynamicColor, content = content)
+}
+
 @Composable
 fun MyApplicationTheme(
     darkTheme: Boolean = isSystemInDarkTheme(),
-    dynamicColor: Boolean = false,
+    dynamicColor: Boolean = true,
     content: @Composable () -> Unit
 ) {
-    GhostMeshTheme(darkTheme = darkTheme, dynamicColor = dynamicColor, content = content)
+    BlueChatTheme(darkTheme = darkTheme, dynamicColor = dynamicColor, content = content)
 }
