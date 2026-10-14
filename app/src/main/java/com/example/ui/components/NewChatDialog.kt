@@ -142,7 +142,7 @@ fun NewChatDialog(
                 OutlinedTextField(
                     value = userInput,
                     onValueChange = { userInput = it },
-                    placeholder = { Text("Escribe un nombre de usuario...", fontSize = 13.sp) },
+                    placeholder = { Text("Escribe usuario o dispositivo#usuario...", fontSize = 13.sp) },
                     singleLine = true,
                     shape = RoundedCornerShape(16.dp),
                     colors = OutlinedTextFieldDefaults.colors(
@@ -182,7 +182,7 @@ fun NewChatDialog(
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
-                        text = if (userInput.isNotBlank()) "Iniciar conversación con \"${userInput.trim()}\"" else "Iniciar conversación",
+                        text = if (userInput.isNotBlank()) "Iniciar con \"${userInput.trim()}\"" else "Iniciar conversación",
                         fontWeight = FontWeight.SemiBold,
                         fontSize = 13.sp
                     )
@@ -226,35 +226,68 @@ fun NewChatDialog(
                                         )
                                     }
                                     .padding(vertical = 8.dp, horizontal = 6.dp),
-                                verticalAlignment = Alignment.CenterVertically
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
                             ) {
-                                Box(
-                                    modifier = Modifier
-                                        .size(38.dp)
-                                        .clip(CircleShape)
-                                        .background(BlueChatPrimary.copy(alpha = 0.15f)),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    Text(
-                                        text = contact.customAlias.take(1).uppercase(),
-                                        fontWeight = FontWeight.Bold,
-                                        color = BlueChatPrimary,
-                                        fontSize = 15.sp
-                                    )
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(38.dp)
+                                            .clip(CircleShape)
+                                            .background(BlueChatPrimary.copy(alpha = 0.15f)),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Text(
+                                            text = contact.customAlias.take(1).uppercase(),
+                                            fontWeight = FontWeight.Bold,
+                                            color = BlueChatPrimary,
+                                            fontSize = 15.sp
+                                        )
+                                    }
+                                    Spacer(modifier = Modifier.width(12.dp))
+                                    Column {
+                                        Text(
+                                            text = contact.customAlias,
+                                            fontWeight = FontWeight.SemiBold,
+                                            fontSize = 14.sp,
+                                            color = MaterialTheme.colorScheme.onSurface
+                                        )
+                                        Text(
+                                            text = contact.nodeId,
+                                            fontSize = 11.sp,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
                                 }
-                                Spacer(modifier = Modifier.width(12.dp))
-                                Column {
-                                    Text(
-                                        text = contact.customAlias,
-                                        fontWeight = FontWeight.SemiBold,
-                                        fontSize = 14.sp,
-                                        color = MaterialTheme.colorScheme.onSurface
-                                    )
-                                    Text(
-                                        text = "#${contact.macHash}",
-                                        fontSize = 11.sp,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
+
+                                // Status pill
+                                if (contact.cloudValidationStatus == "VERIFIED") {
+                                    Box(
+                                        modifier = Modifier
+                                            .clip(RoundedCornerShape(8.dp))
+                                            .background(com.example.ui.theme.BlueChatGreen.copy(alpha = 0.15f))
+                                            .padding(horizontal = 6.dp, vertical = 2.dp)
+                                    ) {
+                                        Text(
+                                            text = "Verificado",
+                                            fontSize = 10.sp,
+                                            color = com.example.ui.theme.BlueChatGreen,
+                                            fontWeight = FontWeight.SemiBold
+                                        )
+                                    }
+                                } else {
+                                    Box(
+                                        modifier = Modifier
+                                            .clip(RoundedCornerShape(8.dp))
+                                            .background(MaterialTheme.colorScheme.surfaceVariant)
+                                            .padding(horizontal = 6.dp, vertical = 2.dp)
+                                    ) {
+                                        Text(
+                                            text = "Offline",
+                                            fontSize = 10.sp,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
                                 }
                             }
                         }

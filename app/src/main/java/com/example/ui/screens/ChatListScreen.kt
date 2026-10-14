@@ -5,6 +5,9 @@ import android.content.Intent
 import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -29,10 +32,12 @@ import androidx.compose.material.icons.filled.BluetoothDisabled
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.DoneAll
 import androidx.compose.material.icons.filled.Hub
-import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.PersonAdd
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.filled.Sync
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -47,11 +52,14 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -59,7 +67,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -68,7 +78,7 @@ import androidx.compose.ui.unit.sp
 import com.example.data.model.DeliveryStatus
 import com.example.data.model.MeshNode
 import com.example.data.model.MeshPacket
-import com.example.ui.components.HardwareHashBadge
+import com.example.mesh.MeshConnectionStatus
 import com.example.ui.theme.BlueChatAmber
 import com.example.ui.theme.BlueChatGreen
 import com.example.ui.theme.BlueChatPrimary
@@ -84,13 +94,36 @@ fun ChatListScreen(
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
+    val haptic = LocalHapticFeedback.current
+
     val contacts by viewModel.contacts.collectAsState()
     val allMessages by viewModel.allMessages.collectAsState()
     val activeNodes by viewModel.activeNodes.collectAsState()
     val isBtEnabled by viewModel.isBluetoothEnabled.collectAsState()
+    val connectionStatus by viewModel.connectionStatus.collectAsState()
+    val showApkShareDialog by viewModel.showApkShareDialog.collectAsState()
 
     var searchQuery by remember { mutableStateOf("") }
     var isSearchActive by remember { mutableStateOf(false) }
+
+    // Triple-tap hidden gesture on "BlueChat" title to share local APK file
+    var titleTapCount by remember { mutableIntStateOf(0) }
+    var lastTitleTapTime by remember { mutableLongStateOf(0L) }
+
+    fun onTitleTripleTap() {
+        val now = System.currentTimeMillis()
+        if (now - lastTitleTapTime < 650) {
+            titleTapCount++
+            if (titleTapCount >= 3) {
+                titleTapCount = 0
+                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                viewModel.showApkShareDialog.value = true
+            }
+        } else {
+            titleTapCount = 1
+        }
+        lastTitleTapTime = now
+    }
 
     val enableBtLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.StartActivityForResult()
@@ -114,6 +147,18 @@ fun ChatListScreen(
     val latestMessageByConversation = remember(allMessages) {
         allMessages.groupBy { it.conversationId }
             .mapValues { entry -> entry.value.maxByOrNull { it.timestamp } }
+    }
+
+    val directConversationIds = remember(latestMessageByConversation) {
+        latestMessageByConversation.keys.filter { it != MeshPacket.BROADCAST_DEST }
+    }
+    val allDirectNodeIds = remember(contacts, directConversationIds, activeNodes) {
+        (contacts.map { it.nodeId } + directConversationIds + activeNodes.keys).distinct()
+    }
+    val sortedDirectNodeIds = remember(allDirectNodeIds, latestMessageByConversation) {
+        allDirectNodeIds.sortedByDescending { targetId ->
+            latestMessageByConversation[targetId]?.timestamp ?: 0L
+        }
     }
 
     Scaffold(
@@ -146,14 +191,24 @@ fun ChatListScreen(
                                 style = MaterialTheme.typography.titleLarge,
                                 fontWeight = FontWeight.Bold,
                                 color = MaterialTheme.colorScheme.onSurface,
-                                letterSpacing = (-0.5).sp
+                                letterSpacing = (-0.5).sp,
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(6.dp))
+                                    .clickable { onTitleTripleTap() }
+                                    .padding(vertical = 4.dp, horizontal = 2.dp)
                             )
                             Spacer(modifier = Modifier.width(8.dp))
                             // Status pill
                             Box(
                                 modifier = Modifier
                                     .clip(RoundedCornerShape(12.dp))
-                                    .background(if (isBtEnabled) BlueChatGreen.copy(alpha = 0.15f) else BlueChatAmber.copy(alpha = 0.15f))
+                                    .background(
+                                        when {
+                                            connectionStatus is MeshConnectionStatus.Reconnecting -> BlueChatAmber.copy(alpha = 0.2f)
+                                            isBtEnabled -> BlueChatGreen.copy(alpha = 0.15f)
+                                            else -> BlueChatAmber.copy(alpha = 0.15f)
+                                        }
+                                    )
                                     .clickable { if (!isBtEnabled) requestEnableBluetooth() }
                                     .padding(horizontal = 8.dp, vertical = 3.dp)
                             ) {
@@ -162,14 +217,27 @@ fun ChatListScreen(
                                         modifier = Modifier
                                             .size(7.dp)
                                             .clip(CircleShape)
-                                            .background(if (isBtEnabled) BlueChatGreen else BlueChatAmber)
+                                            .background(
+                                                when {
+                                                    connectionStatus is MeshConnectionStatus.Reconnecting -> BlueChatAmber
+                                                    isBtEnabled -> BlueChatGreen
+                                                    else -> BlueChatAmber
+                                                }
+                                            )
                                     )
                                     Spacer(modifier = Modifier.width(5.dp))
                                     Text(
-                                        text = if (isBtEnabled) "En línea" else "Activar BT",
+                                        text = when (val status = connectionStatus) {
+                                            is MeshConnectionStatus.Reconnecting -> "Reconectando..."
+                                            else -> if (isBtEnabled) "En línea" else "Activar BT"
+                                        },
                                         fontSize = 11.sp,
                                         fontWeight = FontWeight.SemiBold,
-                                        color = if (isBtEnabled) BlueChatGreen else BlueChatAmber
+                                        color = when {
+                                            connectionStatus is MeshConnectionStatus.Reconnecting -> BlueChatAmber
+                                            isBtEnabled -> BlueChatGreen
+                                            else -> BlueChatAmber
+                                        }
                                     )
                                 }
                             }
@@ -179,6 +247,7 @@ fun ChatListScreen(
                 actions = {
                     IconButton(
                         onClick = {
+                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                             isSearchActive = !isSearchActive
                             if (!isSearchActive) searchQuery = ""
                         },
@@ -191,7 +260,10 @@ fun ChatListScreen(
                         )
                     }
                     IconButton(
-                        onClick = { viewModel.startMeshScan() },
+                        onClick = {
+                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                            viewModel.startMeshScan()
+                        },
                         modifier = Modifier.testTag("scan_refresh_button")
                     ) {
                         Icon(
@@ -208,7 +280,10 @@ fun ChatListScreen(
         },
         floatingActionButton = {
             FloatingActionButton(
-                onClick = { viewModel.showNewChatDialog.value = true },
+                onClick = {
+                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                    viewModel.showNewChatDialog.value = true
+                },
                 containerColor = BlueChatPrimary,
                 contentColor = Color.White,
                 shape = CircleShape,
@@ -229,7 +304,46 @@ fun ChatListScreen(
                 .fillMaxSize()
                 .padding(padding)
         ) {
-            // Bluetooth Disabled Alert Banner (Only when Bluetooth is OFF)
+            // Reconnection visual indicator banner (Exponential Backoff feedback)
+            val currentStatus = connectionStatus
+            if (currentStatus is MeshConnectionStatus.Reconnecting) {
+                item {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(BlueChatAmber.copy(alpha = 0.15f))
+                            .padding(horizontal = 16.dp, vertical = 9.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                imageVector = Icons.Default.Sync,
+                                contentDescription = null,
+                                tint = BlueChatAmber,
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = "Reconectando con la malla (intento ${currentStatus.attempt})...",
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                        }
+                        TextButton(
+                            onClick = {
+                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                viewModel.startMeshScan()
+                            }
+                        ) {
+                            Text("Reintentar", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = BlueChatPrimary)
+                        }
+                    }
+                }
+            }
+
+            // Bluetooth Disabled Alert Banner (Only when Bluetooth is physically OFF)
             if (!isBtEnabled) {
                 item {
                     Row(
@@ -282,7 +396,10 @@ fun ChatListScreen(
                         initials = "#",
                         deliveryStatus = broadcastLatest?.status,
                         isOutgoing = broadcastLatest?.isOutgoing ?: false,
-                        onClick = { viewModel.openChat(MeshPacket.BROADCAST_DEST, null) }
+                        onClick = {
+                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            viewModel.openChat(MeshPacket.BROADCAST_DEST, null)
+                        }
                     )
                     HorizontalDivider(
                         color = MaterialTheme.colorScheme.outline.copy(alpha = 0.08f),
@@ -291,11 +408,8 @@ fun ChatListScreen(
                 }
             }
 
-            // 2. DIRECT CONVERSATIONS LIST
-            val directConversationIds = latestMessageByConversation.keys.filter { it != MeshPacket.BROADCAST_DEST }
-            val allDirectNodeIds = (contacts.map { it.nodeId } + directConversationIds + activeNodes.keys).distinct()
-
-            val filteredNodeIds = allDirectNodeIds.filter { targetNodeId ->
+            // 2. DIRECT CONVERSATIONS LIST (Sorted automatically by most recent interaction)
+            val filteredNodeIds = sortedDirectNodeIds.filter { targetNodeId ->
                 if (searchQuery.isBlank()) true
                 else {
                     val contact = contacts.firstOrNull { it.nodeId == targetNodeId }
@@ -346,7 +460,10 @@ fun ChatListScreen(
                             )
                             Spacer(modifier = Modifier.height(16.dp))
                             Button(
-                                onClick = { viewModel.showNewChatDialog.value = true },
+                                onClick = {
+                                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                    viewModel.showNewChatDialog.value = true
+                                },
                                 shape = RoundedCornerShape(20.dp),
                                 colors = ButtonDefaults.buttonColors(
                                     containerColor = BlueChatPrimary,
@@ -397,6 +514,7 @@ fun ChatListScreen(
                         deliveryStatus = latestMsg?.status,
                         isOutgoing = latestMsg?.isOutgoing ?: false,
                         onClick = {
+                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                             viewModel.openChat(
                                 conversationId = targetNodeId,
                                 peerNode = activeNode ?: MeshNode(
@@ -420,6 +538,53 @@ fun ChatListScreen(
                 Spacer(modifier = Modifier.height(88.dp))
             }
         }
+    }
+
+    // Hidden menu dialog triggered by triple-tapping "BlueChat"
+    if (showApkShareDialog) {
+        AlertDialog(
+            onDismissRequest = { viewModel.showApkShareDialog.value = false },
+            title = {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.Share, contentDescription = null, tint = BlueChatPrimary)
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("Compartir APK de BlueChat", fontWeight = FontWeight.Bold)
+                }
+            },
+            text = {
+                Column {
+                    Text(
+                        text = "Transfiere el instalador de BlueChat directamente a dispositivos cercanos para que puedan conectarse a tu red de malla Bluetooth sin requerir internet.",
+                        fontSize = 13.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(modifier = Modifier.height(14.dp))
+                    Button(
+                        onClick = {
+                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                            viewModel.showApkShareDialog.value = false
+                            viewModel.shareApkFile(context)
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(12.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = BlueChatPrimary,
+                            contentColor = Color.White
+                        )
+                    ) {
+                        Icon(Icons.Default.Bluetooth, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Enviar APK (Bluetooth / Compartir)")
+                    }
+                }
+            },
+            confirmButton = {},
+            dismissButton = {
+                TextButton(onClick = { viewModel.showApkShareDialog.value = false }) {
+                    Text("Cerrar")
+                }
+            }
+        )
     }
 }
 
@@ -477,20 +642,14 @@ fun ChatListItem(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        text = title,
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.SemiBold,
-                        color = MaterialTheme.colorScheme.onSurface,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                    if (hash != null) {
-                        Spacer(modifier = Modifier.width(6.dp))
-                        HardwareHashBadge(hash = hash)
-                    }
-                }
+                Text(
+                    text = title,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
 
                 if (time.isNotBlank()) {
                     Text(

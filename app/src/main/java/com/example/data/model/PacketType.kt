@@ -5,5 +5,6 @@ enum class PacketType {
     AUDIO,
     ANNOUNCE,
     ACK,
-    PING
+    PING,
+    DELETE_MESSAGE
 }

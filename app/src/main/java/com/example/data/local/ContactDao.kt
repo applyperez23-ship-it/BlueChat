@@ -13,11 +13,17 @@ interface ContactDao {
     @Query("SELECT * FROM contacts ORDER BY customAlias ASC")
     fun getAllContactsFlow(): Flow<List<ContactEntity>>
 
+    @Query("SELECT * FROM contacts")
+    suspend fun getAllContactsList(): List<ContactEntity>
+
     @Query("SELECT * FROM contacts WHERE nodeId = :nodeId LIMIT 1")
     suspend fun getContactByNodeId(nodeId: String): ContactEntity?
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertOrUpdateContact(contact: ContactEntity)
+
+    @Query("UPDATE contacts SET cloudValidationStatus = :status WHERE nodeId = :nodeId")
+    suspend fun updateValidationStatus(nodeId: String, status: String)
 
     @Query("DELETE FROM contacts WHERE nodeId = :nodeId")
     suspend fun deleteContact(nodeId: String)

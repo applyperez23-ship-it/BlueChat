@@ -17,6 +17,12 @@ class MeshIdentityManager(context: Context) {
         private const val KEY_SIMULATOR_ENABLED = "simulator_enabled"
     }
 
+    val deviceModel: String
+        get() {
+            val model = android.os.Build.MODEL ?: "Android"
+            return model.replace(Regex("[^a-zA-Z0-9]"), "").ifBlank { "Device" }.take(15)
+        }
+
     val macHash: String
         get() {
             var hash = prefs.getString(KEY_MAC_HASH, null)
@@ -32,18 +38,18 @@ class MeshIdentityManager(context: Context) {
         }
 
     var userName: String
-        get() = prefs.getString(KEY_USER_NAME, "GhostUser") ?: "GhostUser"
+        get() = prefs.getString(KEY_USER_NAME, "BlueUser") ?: "BlueUser"
         set(value) {
-            val sanitized = value.trim().take(20).ifBlank { "GhostUser" }
+            val sanitized = value.trim().replace("#", "").take(20).ifBlank { "BlueUser" }
             prefs.edit().putString(KEY_USER_NAME, sanitized).apply()
         }
 
     /**
-     * Complete unique mesh identifier in format: [Device_MAC_Hash]#[UserName]
-     * e.g., 9F4B21AC#GhostUser
+     * Unique mesh identifier in format: device_model#username (or id#username)
+     * e.g., Pixel8#Alex or SMG991B#User
      */
     val nodeId: String
-        get() = "$macHash#$userName"
+        get() = "$deviceModel#$userName"
 
     var maxTtl: Int
         get() = prefs.getInt(KEY_MAX_TTL, 5).coerceIn(1, 10)

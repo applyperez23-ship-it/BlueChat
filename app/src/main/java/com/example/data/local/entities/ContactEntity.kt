@@ -13,5 +13,6 @@ data class ContactEntity(
     val lastSeenEpochMs: Long = System.currentTimeMillis(),
     val isBlocked: Boolean = false,
     val notes: String = "",
+    val cloudValidationStatus: String = "PENDING", // PENDING, VERIFIED, NOT_FOUND, OFFLINE
     val createdAt: Long = System.currentTimeMillis()
 )

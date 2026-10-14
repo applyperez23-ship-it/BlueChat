@@ -1,15 +1,23 @@
 package com.example.ui.viewmodel
 
 import android.app.Application
+import android.content.Context
+import android.content.Intent
+import android.net.Uri
+import android.os.Build
+import android.widget.Toast
+import androidx.core.content.FileProvider
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.audio.PlayerState
+import com.example.cloud.UsernameValidationResult
 import com.example.data.local.GhostMeshDatabase
 import com.example.data.local.entities.ContactEntity
 import com.example.data.local.entities.MessageEntity
 import com.example.data.local.entities.PacketLogEntity
 import com.example.data.model.MeshNode
 import com.example.data.model.MeshPacket
+import com.example.mesh.MeshConnectionStatus
 import com.example.mesh.MeshEngine
 import com.example.mesh.MeshForegroundService
 import com.example.mesh.MeshIdentityManager
@@ -22,6 +30,9 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import java.io.File
+import java.io.FileInputStream
+import java.io.FileOutputStream
 
 enum class MeshTab {
     CHATS,
@@ -74,6 +85,9 @@ class MeshViewModel(application: Application) : AndroidViewModel(application) {
     val isBluetoothEnabled: StateFlow<Boolean> = repository.isBluetoothEnabled
     val isBluetoothSupported: Boolean get() = repository.isBluetoothSupported
     val isScanning: StateFlow<Boolean> = repository.isScanning
+    val connectionStatus: StateFlow<MeshConnectionStatus> = repository.connectionStatus
+    val isInternetAvailable: StateFlow<Boolean> = repository.cloudRegistry.isInternetAvailable
+
     val relayedCount: StateFlow<Int> = repository.relayedCount
     val deliveredCount: StateFlow<Int> = repository.deliveredCount
 
@@ -93,6 +107,8 @@ class MeshViewModel(application: Application) : AndroidViewModel(application) {
     val showWipeConfirmDialog = MutableStateFlow(false)
     val showClearChatConfirmDialog = MutableStateFlow(false)
     val showEditIdentityDialog = MutableStateFlow(false)
+    val showApkShareDialog = MutableStateFlow(false)
+    val showClearDevDataConfirmDialog = MutableStateFlow(false)
 
     // Current user info
     private val _userName = MutableStateFlow(identityManager.userName)
@@ -100,6 +116,8 @@ class MeshViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _nodeId = MutableStateFlow(identityManager.nodeId)
     val nodeId: StateFlow<String> = _nodeId.asStateFlow()
+
+    val deviceModel: String get() = identityManager.deviceModel
 
     private val _maxTtl = MutableStateFlow(identityManager.maxTtl)
     val maxTtl: StateFlow<Int> = _maxTtl.asStateFlow()
@@ -162,21 +180,32 @@ class MeshViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
 
-        // 3. New contact by username or ID
-        val (hash, name) = if (clean.contains("#")) {
-            MeshNode.parseNodeId(clean)
+        // 3. New contact by device_model#username or username
+        val targetNodeId = if (clean.contains("#")) {
+            clean
         } else {
-            // Generate clean hash from name
-            val generatedHash = java.lang.Integer.toHexString(clean.hashCode()).takeLast(6).uppercase()
-            Pair(generatedHash, clean)
+            "${identityManager.deviceModel}#$clean"
         }
-        val targetNodeId = if (clean.contains("#")) clean else "$hash#$name"
+        val (_, name) = MeshNode.parseNodeId(targetNodeId)
+        val hash = MeshNode.parseNodeId(targetNodeId).first
 
         val newNode = MeshNode(
             nodeId = targetNodeId,
             displayName = name,
             macHash = hash
         )
+
+        // Save pre-added contact for offline use and queue cloud check
+        viewModelScope.launch {
+            repository.saveOrUpdateContact(
+                nodeId = targetNodeId,
+                customAlias = name,
+                originalDisplayName = name,
+                macHash = hash,
+                status = if (isInternetAvailable.value) "PENDING" else "OFFLINE"
+            )
+        }
+
         openChat(targetNodeId, newNode)
         showNewChatDialog.value = false
     }
@@ -192,6 +221,19 @@ class MeshViewModel(application: Application) : AndroidViewModel(application) {
         val chatId = _activeChatId.value ?: return
         if (text.isBlank()) return
         repository.sendTextMessage(chatId, text.trim())
+    }
+
+    fun deleteMessageForMe(messageId: Long) {
+        viewModelScope.launch {
+            repository.deleteMessageLocally(messageId)
+        }
+    }
+
+    fun deleteMessageForEveryone(packetId: String) {
+        val chatId = _activeChatId.value ?: return
+        viewModelScope.launch {
+            repository.deleteMessageForEveryone(chatId, packetId)
+        }
     }
 
     fun startVoiceRecording() {
@@ -263,6 +305,14 @@ class MeshViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun clearDevAndMockData() {
+        viewModelScope.launch {
+            repository.clearDevAndMockData()
+            showClearDevDataConfirmDialog.value = false
+            closeChat()
+        }
+    }
+
     fun wipeDatabaseSecurely() {
         viewModelScope.launch {
             repository.wipeEntireDatabaseSecurely()
@@ -271,12 +321,43 @@ class MeshViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun updateUserName(name: String) {
-        identityManager.userName = name
-        _userName.value = identityManager.userName
-        _nodeId.value = identityManager.nodeId
-        showEditIdentityDialog.value = false
-        repository.meshEngine.refreshNodesWithSimulator()
+    fun verifyAndSaveUsername(
+        newUsername: String,
+        onResult: (UsernameValidationResult) -> Unit
+    ) {
+        val sanitized = newUsername.trim().replace("#", "").take(20)
+        if (sanitized.isBlank()) return
+
+        viewModelScope.launch {
+            val result = repository.cloudRegistry.verifyAndRegisterUsername(
+                deviceModel = identityManager.deviceModel,
+                username = sanitized
+            )
+
+            when (result) {
+                is UsernameValidationResult.Available,
+                is UsernameValidationResult.ClaimedByMe -> {
+                    identityManager.userName = sanitized
+                    _userName.value = identityManager.userName
+                    _nodeId.value = identityManager.nodeId
+                    showEditIdentityDialog.value = false
+                    repository.meshEngine.refreshNodesWithSimulator()
+                    onResult(result)
+                }
+                is UsernameValidationResult.DuplicateRejected -> {
+                    onResult(result)
+                }
+                is UsernameValidationResult.OfflineOrError -> {
+                    // Save locally when offline
+                    identityManager.userName = sanitized
+                    _userName.value = identityManager.userName
+                    _nodeId.value = identityManager.nodeId
+                    showEditIdentityDialog.value = false
+                    repository.meshEngine.refreshNodesWithSimulator()
+                    onResult(result)
+                }
+            }
+        }
     }
 
     fun updateMaxTtl(ttl: Int) {
@@ -304,5 +385,50 @@ class MeshViewModel(application: Application) : AndroidViewModel(application) {
             MeshForegroundService.start(getApplication())
         }
         repository.meshEngine.bluetoothManager.startMeshRadio()
+    }
+
+    /**
+     * Hidden feature: Share application APK file via Android Share Sheet or Bluetooth transfer
+     */
+    fun shareApkFile(context: Context) {
+        try {
+            val sourceApk = File(context.applicationInfo.sourceDir)
+            if (!sourceApk.exists()) {
+                Toast.makeText(context, "Archivo APK no encontrado", Toast.LENGTH_SHORT).show()
+                return
+            }
+
+            // Copy to cache for clean sharing
+            val cacheApk = File(context.cacheDir, "BlueChat.apk")
+            if (!cacheApk.exists() || cacheApk.length() != sourceApk.length()) {
+                FileInputStream(sourceApk).use { input ->
+                    FileOutputStream(cacheApk).use { output ->
+                        input.copyTo(output)
+                    }
+                }
+            }
+
+            val apkUri: Uri = FileProvider.getUriForFile(
+                context,
+                "${context.packageName}.fileprovider",
+                cacheApk
+            )
+
+            val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                type = "application/vnd.android.package-archive"
+                putExtra(Intent.EXTRA_STREAM, apkUri)
+                putExtra(Intent.EXTRA_SUBJECT, "BlueChat APK")
+                putExtra(Intent.EXTRA_TEXT, "Instala BlueChat para comunicarte por malla Bluetooth sin internet.")
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+
+            val chooser = Intent.createChooser(shareIntent, "Compartir APK de BlueChat vía Bluetooth o aplicación").apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            context.startActivity(chooser)
+        } catch (e: Exception) {
+            Toast.makeText(context, "Error al compartir APK: ${e.message}", Toast.LENGTH_LONG).show()
+        }
     }
 }

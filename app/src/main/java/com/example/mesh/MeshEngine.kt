@@ -200,6 +200,13 @@ class MeshEngine(
             val secretKey = MeshCrypto.deriveChatKey(identityManager.nodeId, packet.sourceNodeId)
 
             when (packet.type) {
+                PacketType.DELETE_MESSAGE -> {
+                    val targetPacketId = MeshCrypto.decryptString(packet.encryptedPayload, packet.iv, secretKey)
+                    if (targetPacketId != null) {
+                        database.messageDao().markMessageDeletedByPacketId(targetPacketId)
+                    }
+                }
+
                 PacketType.TEXT -> {
                     val decryptedText = MeshCrypto.decryptString(packet.encryptedPayload, packet.iv, secretKey)
                     if (decryptedText != null) {
@@ -504,6 +511,55 @@ class MeshEngine(
                 timestamp = System.currentTimeMillis()
             )
             database.packetLogDao().insertLog(log)
+        }
+    }
+
+    fun sendDeleteMessagePacket(destNodeId: String, targetPacketId: String) {
+        val isBroadcast = (destNodeId == MeshPacket.BROADCAST_DEST)
+        val key = if (isBroadcast) {
+            MeshCrypto.getBroadcastKey()
+        } else {
+            MeshCrypto.deriveChatKey(identityManager.nodeId, destNodeId)
+        }
+        val (cipher, iv) = MeshCrypto.encryptString(targetPacketId, key)
+
+        val packet = MeshPacket(
+            packetId = UUID.randomUUID().toString(),
+            sourceNodeId = identityManager.nodeId,
+            destNodeId = destNodeId,
+            ttl = identityManager.maxTtl,
+            hopCount = 0,
+            type = PacketType.DELETE_MESSAGE,
+            encryptedPayload = cipher,
+            iv = iv,
+            timestamp = System.currentTimeMillis(),
+            senderDisplayName = identityManager.userName
+        )
+
+        scope.launch {
+            // Mark locally as deleted
+            database.messageDao().markMessageDeletedByPacketId(targetPacketId)
+            // Forward across mesh
+            forwardOverRadio(packet)
+        }
+    }
+
+    fun deleteMessageLocally(messageId: Long) {
+        scope.launch {
+            database.messageDao().deleteMessageById(messageId)
+        }
+    }
+
+    fun clearDevAndMockData() {
+        scope.launch {
+            // Delete all non-broadcast test messages or reset messages
+            database.messageDao().deleteAllMessages()
+            database.contactDao().deleteAllContacts()
+            database.packetLogDao().deleteAllLogs()
+            processedPacketCache.clear()
+            _relayedPacketsCount.value = 0
+            _deliveredPacketsCount.value = 0
+            refreshNodesWithSimulator()
         }
     }
 

@@ -11,7 +11,7 @@ import com.example.data.local.entities.PacketLogEntity
 
 @Database(
     entities = [MessageEntity::class, ContactEntity::class, PacketLogEntity::class],
-    version = 1,
+    version = 2,
     exportSchema = false
 )
 @TypeConverters(Converters::class)

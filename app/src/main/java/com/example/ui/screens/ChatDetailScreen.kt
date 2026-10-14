@@ -2,11 +2,13 @@ package com.example.ui.screens
 
 import android.Manifest
 import android.content.pm.PackageManager
+import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -16,6 +18,8 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -27,13 +31,16 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.DeleteForever
 import androidx.compose.material.icons.filled.DeleteSweep
 import androidx.compose.material.icons.filled.DoneAll
-import androidx.compose.material.icons.filled.Hub
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Mic
-import androidx.compose.material.icons.filled.PersonAdd
+import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -58,8 +65,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -69,7 +80,6 @@ import com.example.data.local.entities.MessageEntity
 import com.example.data.model.MeshNode
 import com.example.data.model.MeshPacket
 import com.example.ui.components.HardwareHashBadge
-import com.example.ui.components.HopIndicator
 import com.example.ui.components.VoiceNoteBubble
 import com.example.ui.theme.BlueChatGreen
 import com.example.ui.theme.BlueChatPrimary
@@ -79,7 +89,7 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun ChatDetailScreen(
     conversationId: String,
@@ -90,6 +100,8 @@ fun ChatDetailScreen(
 ) {
     BackHandler { onBack() }
     val context = LocalContext.current
+    val haptic = LocalHapticFeedback.current
+    val clipboardManager = LocalClipboardManager.current
 
     val messages by viewModel.activeChatMessages.collectAsState()
     val isRecording by viewModel.isRecordingAudio.collectAsState()
@@ -113,11 +125,15 @@ fun ChatDetailScreen(
     var showEditContactDialog by remember { mutableStateOf(false) }
     var aliasInput by remember(title) { mutableStateOf(existingContact?.customAlias ?: peerNode?.customAlias ?: originalName) }
 
+    // Message context menu
+    var selectedMessageForOptions by remember { mutableStateOf<MessageEntity?>(null) }
+
     // Permission launcher for microphone recording
     val micPermissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission()
     ) { granted ->
         if (granted) {
+            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
             viewModel.startVoiceRecording()
         }
     }
@@ -128,6 +144,7 @@ fun ChatDetailScreen(
         ) == PackageManager.PERMISSION_GRANTED
 
         if (hasPermission) {
+            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
             viewModel.startVoiceRecording()
         } else {
             micPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
@@ -148,67 +165,55 @@ fun ChatDetailScreen(
                 title = {
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.clickable {
-                            if (!isBroadcast) {
-                                aliasInput = existingContact?.customAlias ?: title
-                                showEditContactDialog = true
-                            }
-                        }
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(8.dp))
+                            .combinedClickable(
+                                onClick = {
+                                    if (!isBroadcast) {
+                                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                        aliasInput = existingContact?.customAlias ?: originalName
+                                        showEditContactDialog = true
+                                    }
+                                }
+                            )
                     ) {
-                        // Avatar
                         Box(
                             modifier = Modifier
-                                .size(40.dp)
+                                .size(38.dp)
                                 .clip(CircleShape)
-                                .background(if (isBroadcast) BlueChatPrimary else MaterialTheme.colorScheme.surfaceVariant),
+                                .background(if (isBroadcast) BlueChatPrimary else BlueChatGreen),
                             contentAlignment = Alignment.Center
                         ) {
-                            if (isBroadcast) {
-                                Icon(
-                                    imageVector = Icons.Default.Hub,
-                                    contentDescription = null,
-                                    tint = Color.White,
-                                    modifier = Modifier.size(20.dp)
-                                )
-                            } else {
-                                Text(
-                                    text = initials,
-                                    fontWeight = FontWeight.Bold,
-                                    fontSize = 16.sp,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
+                            Text(
+                                text = initials,
+                                fontWeight = FontWeight.Bold,
+                                color = Color.White,
+                                fontSize = 16.sp
+                            )
                         }
 
                         Spacer(modifier = Modifier.width(10.dp))
 
                         Column {
+                            Text(
+                                text = title,
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
                             Row(verticalAlignment = Alignment.CenterVertically) {
-                                Text(
-                                    text = title,
-                                    style = MaterialTheme.typography.titleMedium,
-                                    fontWeight = FontWeight.Bold,
-                                    maxLines = 1
+                                Box(
+                                    modifier = Modifier
+                                        .size(6.dp)
+                                        .clip(CircleShape)
+                                        .background(BlueChatGreen)
                                 )
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Icon(
-                                    imageVector = Icons.Default.Lock,
-                                    contentDescription = "Cifrado",
-                                    tint = BlueChatGreen,
-                                    modifier = Modifier.size(13.dp)
-                                )
-                            }
-
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                if (!isBroadcast) {
-                                    HardwareHashBadge(hash = hash)
-                                    Spacer(modifier = Modifier.width(4.dp))
-                                }
+                                Spacer(modifier = Modifier.width(4.dp))
                                 Text(
-                                    text = if (isBroadcast) "Canal público en malla" else (if (existingContact != null) "Contacto guardado" else "Toca para guardar contacto"),
-                                    style = MaterialTheme.typography.bodySmall,
+                                    text = if (isBroadcast) "Malla Bluetooth • Abierto" else "Cifrado E2EE • Offline",
                                     fontSize = 11.sp,
-                                    color = if (isBroadcast) MaterialTheme.colorScheme.onSurfaceVariant else BlueChatGreen
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
                         }
@@ -216,38 +221,30 @@ fun ChatDetailScreen(
                 },
                 navigationIcon = {
                     IconButton(
-                        onClick = onBack,
+                        onClick = {
+                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            onBack()
+                        },
                         modifier = Modifier.testTag("chat_back_button")
                     ) {
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "Volver"
+                            contentDescription = "Volver",
+                            tint = MaterialTheme.colorScheme.onSurface
                         )
                     }
                 },
                 actions = {
-                    if (!isBroadcast) {
-                        IconButton(
-                            onClick = {
-                                aliasInput = existingContact?.customAlias ?: title
-                                showEditContactDialog = true
-                            },
-                            modifier = Modifier.testTag("save_or_edit_contact_button")
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.PersonAdd,
-                                contentDescription = "Guardar contacto",
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                    }
                     IconButton(
-                        onClick = { viewModel.showClearChatConfirmDialog.value = true },
+                        onClick = {
+                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            viewModel.showClearChatConfirmDialog.value = true
+                        },
                         modifier = Modifier.testTag("clear_chat_button")
                     ) {
                         Icon(
                             imageVector = Icons.Default.DeleteSweep,
-                            contentDescription = "Vaciar conversación",
+                            contentDescription = "Vaciar chat",
                             tint = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
@@ -258,11 +255,13 @@ fun ChatDetailScreen(
             )
         },
         bottomBar = {
-            // Messenger input bar
+            // Messenger input bar configured to dynamically sit above the soft keyboard
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
                     .background(MaterialTheme.colorScheme.surface)
+                    .navigationBarsPadding()
+                    .imePadding()
                     .padding(horizontal = 10.dp, vertical = 8.dp)
             ) {
                 if (isRecording) {
@@ -295,7 +294,10 @@ fun ChatDetailScreen(
 
                         Row {
                             TextButton(
-                                onClick = { viewModel.cancelVoiceRecording() },
+                                onClick = {
+                                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                    viewModel.cancelVoiceRecording()
+                                },
                                 modifier = Modifier.testTag("cancel_recording_button")
                             ) {
                                 Icon(Icons.Default.Close, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(16.dp))
@@ -304,7 +306,10 @@ fun ChatDetailScreen(
                             }
 
                             IconButton(
-                                onClick = { viewModel.stopAndSendVoiceRecording() },
+                                onClick = {
+                                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                    viewModel.stopAndSendVoiceRecording()
+                                },
                                 modifier = Modifier
                                     .size(38.dp)
                                     .clip(CircleShape)
@@ -343,6 +348,7 @@ fun ChatDetailScreen(
                         if (inputText.isNotBlank()) {
                             IconButton(
                                 onClick = {
+                                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                                     viewModel.sendTextMessage(inputText)
                                     inputText = ""
                                 },
@@ -412,7 +418,7 @@ fun ChatDetailScreen(
                     )
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(
-                        text = "Los mensajes y audios viajan de teléfono a teléfono de forma segura mediante la red Bluetooth.",
+                        text = "Los mensajes viajan de teléfono a teléfono mediante la red Bluetooth con cifrado AES-GCM.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         fontSize = 12.sp,
@@ -434,11 +440,74 @@ fun ChatDetailScreen(
                     ChatMessageItem(
                         message = message,
                         playerState = playerState,
-                        onPlayAudio = { path -> viewModel.playAudio(path) }
+                        onPlayAudio = { path -> viewModel.playAudio(path) },
+                        onMessageLongClick = { msg ->
+                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                            selectedMessageForOptions = msg
+                        }
                     )
                 }
             }
         }
+    }
+
+    // Message options dialog: Delete for me, Delete for everyone, Copy
+    selectedMessageForOptions?.let { msg ->
+        val isDeletedText = msg.text == "🚫 Este mensaje fue eliminado"
+        AlertDialog(
+            onDismissRequest = { selectedMessageForOptions = null },
+            title = { Text("Opciones del mensaje", fontWeight = FontWeight.Bold) },
+            text = {
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    if (msg.text != null && !isDeletedText) {
+                        TextButton(
+                            onClick = {
+                                clipboardManager.setText(AnnotatedString(msg.text))
+                                Toast.makeText(context, "Texto copiado al portapapeles", Toast.LENGTH_SHORT).show()
+                                selectedMessageForOptions = null
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Icon(Icons.Default.ContentCopy, contentDescription = null, tint = BlueChatPrimary)
+                            Spacer(modifier = Modifier.width(10.dp))
+                            Text("Copiar texto", color = MaterialTheme.colorScheme.onSurface)
+                        }
+                    }
+
+                    TextButton(
+                        onClick = {
+                            viewModel.deleteMessageForMe(msg.id)
+                            selectedMessageForOptions = null
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Icon(Icons.Default.Delete, contentDescription = null, tint = BlueChatRed)
+                        Spacer(modifier = Modifier.width(10.dp))
+                        Text("Eliminar para mí", color = BlueChatRed)
+                    }
+
+                    if (msg.isOutgoing && !isDeletedText) {
+                        TextButton(
+                            onClick = {
+                                viewModel.deleteMessageForEveryone(msg.packetId)
+                                selectedMessageForOptions = null
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Icon(Icons.Default.DeleteForever, contentDescription = null, tint = BlueChatRed)
+                            Spacer(modifier = Modifier.width(10.dp))
+                            Text("Eliminar para todos", color = BlueChatRed, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                }
+            },
+            confirmButton = {},
+            dismissButton = {
+                TextButton(onClick = { selectedMessageForOptions = null }) {
+                    Text("Cancelar")
+                }
+            }
+        )
     }
 
     // Save or Edit contact dialog
@@ -513,11 +582,13 @@ fun ChatDetailScreen(
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun ChatMessageItem(
     message: MessageEntity,
     playerState: com.example.audio.PlayerState,
-    onPlayAudio: (String) -> Unit
+    onPlayAudio: (String) -> Unit,
+    onMessageLongClick: (MessageEntity) -> Unit = {}
 ) {
     val isOut = message.isOutgoing
     val timeFormat = remember { SimpleDateFormat("HH:mm", Locale.getDefault()) }
@@ -525,43 +596,47 @@ fun ChatMessageItem(
 
     val bubbleAlignment = if (isOut) Alignment.End else Alignment.Start
     val bubbleShape = if (isOut) {
-        RoundedCornerShape(topStart = 18.dp, topEnd = 4.dp, bottomStart = 18.dp, bottomEnd = 18.dp)
+        RoundedCornerShape(topStart = 16.dp, topEnd = 4.dp, bottomStart = 16.dp, bottomEnd = 16.dp)
     } else {
-        RoundedCornerShape(topStart = 4.dp, topEnd = 18.dp, bottomStart = 18.dp, bottomEnd = 18.dp)
+        RoundedCornerShape(topStart = 4.dp, topEnd = 16.dp, bottomStart = 16.dp, bottomEnd = 16.dp)
     }
+
+    val isDeleted = message.text == "🚫 Este mensaje fue eliminado"
 
     Column(
         modifier = Modifier.fillMaxWidth(),
         horizontalAlignment = bubbleAlignment
     ) {
         if (!isOut) {
-            val (hash, name) = MeshNode.parseNodeId(message.senderNodeId)
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
+            val (_, name) = MeshNode.parseNodeId(message.senderNodeId)
+            Text(
+                text = message.senderDisplayName.ifBlank { name },
+                style = MaterialTheme.typography.bodySmall,
+                fontSize = 11.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(start = 6.dp, bottom = 2.dp)
-            ) {
-                Text(
-                    text = message.senderDisplayName.ifBlank { name },
-                    style = MaterialTheme.typography.bodySmall,
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = BlueChatPrimary
-                )
-                Spacer(modifier = Modifier.width(4.dp))
-                HardwareHashBadge(hash = hash)
-            }
+            )
         }
 
         Box(
             modifier = Modifier
                 .clip(bubbleShape)
                 .background(
-                    if (isOut) BlueChatPrimary else MaterialTheme.colorScheme.surfaceVariant
+                    if (isOut) {
+                        if (isDeleted) BlueChatPrimary.copy(alpha = 0.5f) else BlueChatPrimary
+                    } else {
+                        if (isDeleted) MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f) else MaterialTheme.colorScheme.surfaceVariant
+                    }
+                )
+                .combinedClickable(
+                    onClick = { onMessageLongClick(message) },
+                    onLongClick = { onMessageLongClick(message) }
                 )
                 .padding(horizontal = 12.dp, vertical = 8.dp)
         ) {
             Column {
-                if (message.audioFilePath != null) {
+                if (message.audioFilePath != null && !isDeleted) {
                     VoiceNoteBubble(
                         audioFilePath = message.audioFilePath,
                         durationSec = message.audioDurationSec,
@@ -577,29 +652,56 @@ fun ChatMessageItem(
                     )
                 }
 
-                Spacer(modifier = Modifier.height(4.dp))
+                Spacer(modifier = Modifier.height(3.dp))
 
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    horizontalArrangement = Arrangement.End,
+                    modifier = Modifier.align(Alignment.End)
                 ) {
-                    HopIndicator(hopCount = message.hopCount, isEncrypted = message.isEncrypted)
-
-                    Spacer(modifier = Modifier.weight(1f, fill = false))
-
                     Text(
                         text = formattedTime,
                         fontSize = 10.sp,
-                        color = (if (isOut) Color.White.copy(alpha = 0.8f) else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f))
+                        color = if (isOut) Color.White.copy(alpha = 0.75f) else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.65f)
                     )
 
-                    if (isOut) {
-                        Icon(
-                            imageVector = Icons.Default.DoneAll,
-                            contentDescription = "Entregado",
-                            tint = Color.White.copy(alpha = 0.9f),
-                            modifier = Modifier.size(13.dp)
-                        )
+                    if (isOut && !isDeleted) {
+                        Spacer(modifier = Modifier.width(3.dp))
+                        when (message.status) {
+                            com.example.data.model.DeliveryStatus.DELIVERED -> {
+                                Icon(
+                                    imageVector = Icons.Default.DoneAll,
+                                    contentDescription = "Entregado",
+                                    tint = Color.White.copy(alpha = 0.95f),
+                                    modifier = Modifier.size(14.dp)
+                                )
+                            }
+                            com.example.data.model.DeliveryStatus.SENT,
+                            com.example.data.model.DeliveryStatus.RELAYED -> {
+                                Icon(
+                                    imageVector = Icons.Default.Check,
+                                    contentDescription = "Enviado",
+                                    tint = Color.White.copy(alpha = 0.85f),
+                                    modifier = Modifier.size(14.dp)
+                                )
+                            }
+                            com.example.data.model.DeliveryStatus.SENDING -> {
+                                Icon(
+                                    imageVector = Icons.Default.Schedule,
+                                    contentDescription = "Enviando",
+                                    tint = Color.White.copy(alpha = 0.75f),
+                                    modifier = Modifier.size(12.dp)
+                                )
+                            }
+                            com.example.data.model.DeliveryStatus.FAILED -> {
+                                Text(
+                                    text = "!",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color.White
+                                )
+                            }
+                        }
                     }
                 }
             }

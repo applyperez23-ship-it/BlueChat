@@ -12,6 +12,7 @@ import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
+import android.os.PowerManager
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
@@ -68,11 +69,25 @@ class MeshForegroundService : Service {
         }
     }
 
+    private var wakeLock: PowerManager.WakeLock? = null
+
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onCreate() {
         super.onCreate()
         createNotificationChannel()
+        try {
+            val powerManager = getSystemService(Context.POWER_SERVICE) as? PowerManager
+            wakeLock = powerManager?.newWakeLock(
+                PowerManager.PARTIAL_WAKE_LOCK,
+                "BlueChat:MeshForegroundServiceWakeLock"
+            )?.apply {
+                setReferenceCounted(false)
+                acquire(10 * 60 * 1000L) // 10 minutes timeout per lock renewal
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Could not acquire wake lock", e)
+        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -90,8 +105,8 @@ class MeshForegroundService : Service {
 
         try {
             val notification = buildNotification(
-                "BlueChat Radio Activo",
-                "Retransmitiendo paquetes de malla P2P en segundo plano"
+                "BlueChat activo en segundo plano",
+                "Escuchando y retransmitiendo mensajes en la red Bluetooth"
             )
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 startForeground(
@@ -115,14 +130,23 @@ class MeshForegroundService : Service {
         return START_STICKY
     }
 
+    override fun onDestroy() {
+        try {
+            wakeLock?.let {
+                if (it.isHeld) it.release()
+            }
+        } catch (_: Exception) {}
+        super.onDestroy()
+    }
+
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = NotificationChannel(
                 CHANNEL_ID,
-                "BlueChat Network Service",
+                "BlueChat Servicio en Segundo Plano",
                 NotificationManager.IMPORTANCE_LOW
             ).apply {
-                description = "Mantiene la radio Bluetooth y la retransmisión de paquetes activa"
+                description = "Mantiene la radio Bluetooth y la retransmisión P2P activa en segundo plano"
                 setShowBadge(false)
             }
             val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager

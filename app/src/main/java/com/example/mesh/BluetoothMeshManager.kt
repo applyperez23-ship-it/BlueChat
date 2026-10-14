@@ -27,6 +27,7 @@ import com.example.data.model.MeshPacket
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -38,6 +39,14 @@ import java.io.PrintWriter
 import java.nio.charset.StandardCharsets
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
+import kotlin.math.min
+
+sealed class MeshConnectionStatus {
+    object Idle : MeshConnectionStatus()
+    object Connected : MeshConnectionStatus()
+    data class Reconnecting(val attempt: Int, val delaySec: Int) : MeshConnectionStatus()
+    data class Disconnected(val reason: String) : MeshConnectionStatus()
+}
 
 class BluetoothMeshManager(
     private val context: Context,
@@ -46,10 +55,10 @@ class BluetoothMeshManager(
 ) {
     companion object {
         private const val TAG = "BluetoothMeshManager"
-        private const val SERVICE_NAME = "GhostMeshDirect"
-        // Standard GhostMesh RFCOMM UUID
+        private const val SERVICE_NAME = "BlueChatDirect"
         val MESH_UUID: UUID = UUID.fromString("9f4b21ac-82da-4f3b-b6d1-4c4e7f8a9b21")
         val BLE_SERVICE_UUID: ParcelUuid = ParcelUuid.fromString("00009F4B-0000-1000-8000-00805F9B34FB")
+        private const val MAX_BACKOFF_DELAY_MS = 30_000L
     }
 
     private val bluetoothManager = context.getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager
@@ -58,6 +67,8 @@ class BluetoothMeshManager(
     private val scope = CoroutineScope(Dispatchers.IO)
     private var serverJob: Job? = null
     private var serverSocket: BluetoothServerSocket? = null
+    private var reconnectJob: Job? = null
+    private var reconnectAttempts = 0
 
     // Active client & server connections
     private val activeSockets = ConcurrentHashMap<String, BluetoothSocket>()
@@ -71,6 +82,9 @@ class BluetoothMeshManager(
     private val _isScanning = MutableStateFlow(false)
     val isScanning: StateFlow<Boolean> = _isScanning.asStateFlow()
 
+    private val _connectionStatus = MutableStateFlow<MeshConnectionStatus>(MeshConnectionStatus.Idle)
+    val connectionStatus: StateFlow<MeshConnectionStatus> = _connectionStatus.asStateFlow()
+
     val isHardwareSupported: Boolean
         get() = bluetoothAdapter != null
 
@@ -83,6 +97,8 @@ class BluetoothMeshManager(
                 updateBluetoothState()
                 if (_isBluetoothEnabled.value && hasBluetoothPermissions()) {
                     startMeshRadio()
+                } else if (!_isBluetoothEnabled.value) {
+                    _connectionStatus.value = MeshConnectionStatus.Disconnected("Bluetooth apagado")
                 }
             }
         }
@@ -121,6 +137,9 @@ class BluetoothMeshManager(
     fun updateBluetoothState() {
         val enabled = bluetoothAdapter != null && bluetoothAdapter.isEnabled
         _isBluetoothEnabled.value = enabled
+        if (!enabled) {
+            _connectionStatus.value = MeshConnectionStatus.Disconnected("Bluetooth apagado")
+        }
     }
 
     @SuppressLint("MissingPermission")
@@ -136,16 +155,61 @@ class BluetoothMeshManager(
             return
         }
 
+        reconnectAttempts = 0
+        reconnectJob?.cancel()
+        _connectionStatus.value = MeshConnectionStatus.Connected
+
         startServerListener()
         startBleAdvertising()
         startBleScanning()
     }
 
     fun stopMeshRadio() {
+        reconnectJob?.cancel()
         stopServerListener()
         stopBleAdvertising()
         stopBleScanning()
         closeAllSockets()
+        _connectionStatus.value = MeshConnectionStatus.Idle
+    }
+
+    /**
+     * Exponential backoff retry mechanism when connection or socket fails unexpectedly
+     */
+    private fun triggerExponentialBackoffReconnect() {
+        if (!hasBluetoothPermissions() || bluetoothAdapter == null || !bluetoothAdapter.isEnabled) {
+            return
+        }
+
+        reconnectJob?.cancel()
+        reconnectJob = scope.launch {
+            reconnectAttempts++
+            // Delay: 1s, 2s, 4s, 8s, 16s... up to 30s
+            val backoffMs = min(1000L * (1 shl min(reconnectAttempts - 1, 5)), MAX_BACKOFF_DELAY_MS)
+            val delaySec = (backoffMs / 1000).toInt()
+
+            _connectionStatus.value = MeshConnectionStatus.Reconnecting(
+                attempt = reconnectAttempts,
+                delaySec = delaySec
+            )
+
+            Log.d(TAG, "Reconnecting attempt #$reconnectAttempts in ${delaySec}s...")
+            delay(backoffMs)
+
+            if (isActive && hasBluetoothPermissions() && bluetoothAdapter?.isEnabled == true) {
+                // Restart server and BLE radio components
+                startServerListener()
+                startBleAdvertising()
+                startBleScanning()
+
+                if (activeSockets.isNotEmpty()) {
+                    reconnectAttempts = 0
+                    _connectionStatus.value = MeshConnectionStatus.Connected
+                } else {
+                    _connectionStatus.value = MeshConnectionStatus.Connected
+                }
+            }
+        }
     }
 
     @SuppressLint("MissingPermission")
@@ -165,7 +229,8 @@ class BluetoothMeshManager(
                     handleConnectedSocket(socket)
                 }
             } catch (e: Exception) {
-                Log.e(TAG, "Server listener stopped", e)
+                Log.e(TAG, "Server listener stopped or dropped", e)
+                triggerExponentialBackoffReconnect()
             }
         }
     }
@@ -181,6 +246,8 @@ class BluetoothMeshManager(
     private fun handleConnectedSocket(socket: BluetoothSocket) {
         val deviceId = socket.remoteDevice?.address ?: UUID.randomUUID().toString()
         activeSockets[deviceId] = socket
+        reconnectAttempts = 0
+        _connectionStatus.value = MeshConnectionStatus.Connected
 
         scope.launch {
             try {
@@ -199,6 +266,9 @@ class BluetoothMeshManager(
             } finally {
                 activeSockets.remove(deviceId)
                 try { socket.close() } catch (_: Exception) {}
+                if (activeSockets.isEmpty()) {
+                    triggerExponentialBackoffReconnect()
+                }
             }
         }
     }
@@ -209,12 +279,14 @@ class BluetoothMeshManager(
 
         scope.launch {
             try {
+                _connectionStatus.value = MeshConnectionStatus.Reconnecting(attempt = 1, delaySec = 0)
                 val socket = device.createRfcommSocketToServiceRecord(MESH_UUID)
                 socket.connect()
                 Log.d(TAG, "Connected to remote device: ${device.address}")
                 handleConnectedSocket(socket)
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to connect to device ${device.address}", e)
+                triggerExponentialBackoffReconnect()
             }
         }
     }
@@ -262,7 +334,6 @@ class BluetoothMeshManager(
                 .setConnectable(true)
                 .build()
 
-            // Include local node hash in service data
             val localIdBytes = identityManager.nodeId.take(16).toByteArray(StandardCharsets.UTF_8)
             val data = AdvertiseData.Builder()
                 .setIncludeDeviceName(false)
