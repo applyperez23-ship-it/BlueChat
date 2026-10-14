@@ -39,9 +39,16 @@ class MeshEngine(
     lateinit var bluetoothManager: BluetoothMeshManager
         private set
 
+    // Wi-Fi Direct manager (Dual local transport)
+    lateinit var wifiDirectManager: WifiDirectMeshManager
+        private set
+
     // Simulator
     lateinit var simulator: MeshSimulator
         private set
+
+    // Emergency Internet Mode: strictly in-memory session override for selected chat
+    val emergencyInternetChatId = MutableStateFlow<String?>(null)
 
     private val _activeNodesMap = MutableStateFlow<Map<String, MeshNode>>(emptyMap())
     val activeNodesMap: StateFlow<Map<String, MeshNode>> = _activeNodesMap.asStateFlow()
@@ -58,6 +65,12 @@ class MeshEngine(
 
     private fun initSubsystems() {
         bluetoothManager = BluetoothMeshManager(
+            context = context,
+            identityManager = identityManager,
+            onPacketReceived = { packet -> onIncomingPacket(packet) }
+        )
+
+        wifiDirectManager = WifiDirectMeshManager(
             context = context,
             identityManager = identityManager,
             onPacketReceived = { packet -> onIncomingPacket(packet) }
@@ -80,10 +93,16 @@ class MeshEngine(
             }
         )
 
-        // Observe discovered nodes from bluetooth
+        // Observe discovered nodes from bluetooth and Wi-Fi Direct
         scope.launch {
-            bluetoothManager.discoveredNodes.collect { btNodes ->
-                syncNodes(btNodes)
+            bluetoothManager.discoveredNodes.collect {
+                syncAllNodes()
+            }
+        }
+
+        scope.launch {
+            wifiDirectManager.discoveredNodes.collect {
+                syncAllNodes()
             }
         }
 
@@ -91,26 +110,22 @@ class MeshEngine(
     }
 
     fun refreshNodesWithSimulator() {
-        val nodes = mutableMapOf<String, MeshNode>()
-        if (identityManager.isSimulatorEnabled) {
-            simulator.getVirtualNodes().forEach {
-                nodes[it.nodeId] = it
-            }
-        }
-        bluetoothManager.discoveredNodes.value.forEach { (id, node) ->
-            nodes[id] = node
-        }
-        _activeNodesMap.value = nodes
+        syncAllNodes()
     }
 
-    private fun syncNodes(btNodes: Map<String, MeshNode>) {
+    private fun syncAllNodes() {
         val merged = mutableMapOf<String, MeshNode>()
         if (identityManager.isSimulatorEnabled) {
             simulator.getVirtualNodes().forEach {
                 merged[it.nodeId] = it
             }
         }
-        merged.putAll(btNodes)
+        bluetoothManager.discoveredNodes.value.forEach { (id, node) ->
+            merged[id] = node
+        }
+        wifiDirectManager.discoveredNodes.value.forEach { (id, node) ->
+            merged[id] = node
+        }
         _activeNodesMap.value = merged
     }
 
@@ -210,11 +225,12 @@ class MeshEngine(
                 PacketType.TEXT -> {
                     val decryptedText = MeshCrypto.decryptString(packet.encryptedPayload, packet.iv, secretKey)
                     if (decryptedText != null) {
+                        val senderName = packet.senderDisplayName.ifBlank { packet.sourceNodeId }
                         val messageEntity = MessageEntity(
                             packetId = packet.packetId,
                             conversationId = packet.sourceNodeId, // Direct chat
                             senderNodeId = packet.sourceNodeId,
-                            senderDisplayName = packet.senderDisplayName.ifBlank { packet.sourceNodeId },
+                            senderDisplayName = senderName,
                             recipientNodeId = identityManager.nodeId,
                             isOutgoing = false,
                             text = decryptedText,
@@ -226,6 +242,14 @@ class MeshEngine(
                             isEncrypted = true
                         )
                         database.messageDao().insertMessage(messageEntity)
+
+                        NotificationHelper.showIncomingMessageNotification(
+                            context = context,
+                            conversationId = packet.sourceNodeId,
+                            senderName = senderName,
+                            messageText = decryptedText,
+                            isVoiceNote = false
+                        )
                     }
                 }
 
@@ -233,11 +257,12 @@ class MeshEngine(
                     val decryptedAudioBytes = MeshCrypto.decryptBytes(packet.encryptedPayload, packet.iv, secretKey)
                     if (decryptedAudioBytes != null) {
                         val audioFile = saveAudioToCache(packet.packetId, decryptedAudioBytes)
+                        val senderName = packet.senderDisplayName.ifBlank { packet.sourceNodeId }
                         val messageEntity = MessageEntity(
                             packetId = packet.packetId,
                             conversationId = packet.sourceNodeId,
                             senderNodeId = packet.sourceNodeId,
-                            senderDisplayName = packet.senderDisplayName.ifBlank { packet.sourceNodeId },
+                            senderDisplayName = senderName,
                             recipientNodeId = identityManager.nodeId,
                             isOutgoing = false,
                             text = null,
@@ -249,6 +274,14 @@ class MeshEngine(
                             isEncrypted = true
                         )
                         database.messageDao().insertMessage(messageEntity)
+
+                        NotificationHelper.showIncomingMessageNotification(
+                            context = context,
+                            conversationId = packet.sourceNodeId,
+                            senderName = senderName,
+                            messageText = "Nota de voz recibida",
+                            isVoiceNote = true
+                        )
                     }
                 }
                 else -> {}
@@ -279,13 +312,15 @@ class MeshEngine(
                 PacketType.TEXT -> {
                     val decryptedText = MeshCrypto.decryptString(packet.encryptedPayload, packet.iv, groupKey)
                     if (decryptedText != null) {
+                        val isFromSelf = (packet.sourceNodeId == identityManager.nodeId)
+                        val senderName = packet.senderDisplayName.ifBlank { packet.sourceNodeId }
                         val messageEntity = MessageEntity(
                             packetId = packet.packetId,
                             conversationId = MeshPacket.BROADCAST_DEST,
                             senderNodeId = packet.sourceNodeId,
-                            senderDisplayName = packet.senderDisplayName.ifBlank { packet.sourceNodeId },
+                            senderDisplayName = senderName,
                             recipientNodeId = MeshPacket.BROADCAST_DEST,
-                            isOutgoing = (packet.sourceNodeId == identityManager.nodeId),
+                            isOutgoing = isFromSelf,
                             text = decryptedText,
                             audioFilePath = null,
                             audioDurationSec = 0,
@@ -295,19 +330,31 @@ class MeshEngine(
                             isEncrypted = true
                         )
                         database.messageDao().insertMessage(messageEntity)
+
+                        if (!isFromSelf) {
+                            NotificationHelper.showIncomingMessageNotification(
+                                context = context,
+                                conversationId = MeshPacket.BROADCAST_DEST,
+                                senderName = "Canal General ($senderName)",
+                                messageText = decryptedText,
+                                isVoiceNote = false
+                            )
+                        }
                     }
                 }
                 PacketType.AUDIO -> {
                     val decryptedAudioBytes = MeshCrypto.decryptBytes(packet.encryptedPayload, packet.iv, groupKey)
                     if (decryptedAudioBytes != null) {
                         val audioFile = saveAudioToCache(packet.packetId, decryptedAudioBytes)
+                        val isFromSelf = (packet.sourceNodeId == identityManager.nodeId)
+                        val senderName = packet.senderDisplayName.ifBlank { packet.sourceNodeId }
                         val messageEntity = MessageEntity(
                             packetId = packet.packetId,
                             conversationId = MeshPacket.BROADCAST_DEST,
                             senderNodeId = packet.sourceNodeId,
-                            senderDisplayName = packet.senderDisplayName.ifBlank { packet.sourceNodeId },
+                            senderDisplayName = senderName,
                             recipientNodeId = MeshPacket.BROADCAST_DEST,
-                            isOutgoing = (packet.sourceNodeId == identityManager.nodeId),
+                            isOutgoing = isFromSelf,
                             text = null,
                             audioFilePath = audioFile.absolutePath,
                             audioDurationSec = 5,
@@ -317,6 +364,16 @@ class MeshEngine(
                             isEncrypted = true
                         )
                         database.messageDao().insertMessage(messageEntity)
+
+                        if (!isFromSelf) {
+                            NotificationHelper.showIncomingMessageNotification(
+                                context = context,
+                                conversationId = MeshPacket.BROADCAST_DEST,
+                                senderName = "Canal General ($senderName)",
+                                messageText = "Nota de voz recibida",
+                                isVoiceNote = true
+                            )
+                        }
                     }
                 }
                 else -> {}
@@ -384,24 +441,31 @@ class MeshEngine(
     }
 
     private fun forwardOverRadio(packet: MeshPacket) {
+        // Dual Local Transport Layer: Bluetooth LE/Classic + Wi-Fi Direct (P2P)
         bluetoothManager.sendPacketOverBluetooth(packet)
+        wifiDirectManager.broadcastPacket(packet)
+
         if (identityManager.isSimulatorEnabled) {
             simulator.processOutgoingPacket(packet)
         }
     }
 
     /**
-     * Sends a new outgoing packet originated by the local node
+     * Sends a new outgoing packet originated by the local node.
+     * Enforces 100% offline local transport by default.
+     * Emergency Internet Mode provides temporary session override only when explicitly enabled for that chat.
      */
     fun sendOutgoingPacket(
         destNodeId: String,
         type: PacketType,
         plainBytesOrText: ByteArray,
         durationSec: Int = 0,
-        localAudioFilePath: String? = null
+        localAudioFilePath: String? = null,
+        destDisplayName: String = ""
     ): String {
         val packetId = UUID.randomUUID().toString()
         val isBroadcast = (destNodeId == MeshPacket.BROADCAST_DEST)
+        val isEmergencyActive = (emergencyInternetChatId.value == destNodeId)
 
         // 1. Encrypt with E2E AES
         val key = if (isBroadcast) {
@@ -447,18 +511,19 @@ class MeshEngine(
             )
             database.messageDao().insertMessage(messageEntity)
 
+            val actionLabel = if (isEmergencyActive) "ORIGINATED_EMERGENCY_INTERNET" else "ORIGINATED_BY_ME"
             recordPacketLog(
                 packetId = packetId,
                 src = identityManager.nodeId,
                 dst = destNodeId,
                 type = type.name,
-                action = "ORIGINATED_BY_ME",
+                action = actionLabel,
                 hops = 0,
                 ttl = packet.ttl,
                 size = cipher.length
             )
 
-            // 3. Dispatch to radio & simulator
+            // 3. Dispatch to dual radio layer (Bluetooth + Wi-Fi Direct) & simulator
             forwardOverRadio(packet)
         }
 
@@ -547,6 +612,18 @@ class MeshEngine(
     fun deleteMessageLocally(messageId: Long) {
         scope.launch {
             database.messageDao().deleteMessageById(messageId)
+        }
+    }
+
+    fun deleteMultipleMessagesLocally(messageIds: List<Long>) {
+        scope.launch {
+            database.messageDao().deleteMessagesByIds(messageIds)
+        }
+    }
+
+    fun deleteMultipleMessagesForEveryone(destNodeId: String, packetIds: List<String>) {
+        for (pid in packetIds) {
+            sendDeleteMessagePacket(destNodeId, pid)
         }
     }
 

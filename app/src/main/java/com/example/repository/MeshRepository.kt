@@ -114,8 +114,20 @@ class MeshRepository(
         meshEngine.deleteMessageLocally(messageId)
     }
 
+    fun deleteMultipleMessagesLocally(messageIds: List<Long>) {
+        meshEngine.deleteMultipleMessagesLocally(messageIds)
+    }
+
+    suspend fun getMessagesByIds(messageIds: List<Long>): List<MessageEntity> = withContext(Dispatchers.IO) {
+        database.messageDao().getMessagesByIds(messageIds)
+    }
+
     fun deleteMessageForEveryone(destNodeId: String, packetId: String) {
         meshEngine.sendDeleteMessagePacket(destNodeId, packetId)
+    }
+
+    fun deleteMultipleMessagesForEveryone(destNodeId: String, packetIds: List<String>) {
+        meshEngine.deleteMultipleMessagesForEveryone(destNodeId, packetIds)
     }
 
     fun clearDevAndMockData() {

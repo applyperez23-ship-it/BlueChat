@@ -8,6 +8,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -40,9 +41,18 @@ import androidx.compose.material.icons.filled.DeleteSweep
 import androidx.compose.material.icons.filled.DoneAll
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.PersonAdd
+import androidx.compose.material.icons.filled.Radar
+import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.RadioButtonUnchecked
 import androidx.compose.material.icons.filled.Schedule
+import androidx.compose.material.icons.filled.SelectAll
 import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material.icons.filled.WarningAmber
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -73,6 +83,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
@@ -81,6 +92,7 @@ import com.example.data.model.MeshNode
 import com.example.data.model.MeshPacket
 import com.example.ui.components.HardwareHashBadge
 import com.example.ui.components.VoiceNoteBubble
+import com.example.ui.theme.BlueChatAmber
 import com.example.ui.theme.BlueChatGreen
 import com.example.ui.theme.BlueChatPrimary
 import com.example.ui.theme.BlueChatRed
@@ -98,7 +110,20 @@ fun ChatDetailScreen(
     onBack: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    BackHandler { onBack() }
+    // Multi-message selection mode
+    var isSelectionMode by remember { mutableStateOf(false) }
+    var selectedMessageIds by remember { mutableStateOf(setOf<Long>()) }
+    var showBatchDeleteDialog by remember { mutableStateOf(false) }
+
+    val emergencyChatId by viewModel.emergencyInternetChatId.collectAsState()
+    val isEmergencyModeActive = (emergencyChatId == conversationId)
+
+    BackHandler(enabled = isSelectionMode) {
+        isSelectionMode = false
+        selectedMessageIds = emptySet()
+    }
+    BackHandler(enabled = !isSelectionMode) { onBack() }
+
     val context = LocalContext.current
     val haptic = LocalHapticFeedback.current
     val clipboardManager = LocalClipboardManager.current
@@ -125,7 +150,7 @@ fun ChatDetailScreen(
     var showEditContactDialog by remember { mutableStateOf(false) }
     var aliasInput by remember(title) { mutableStateOf(existingContact?.customAlias ?: peerNode?.customAlias ?: originalName) }
 
-    // Message context menu
+    // Single message context menu
     var selectedMessageForOptions by remember { mutableStateOf<MessageEntity?>(null) }
 
     // Permission launcher for microphone recording
@@ -161,98 +186,167 @@ fun ChatDetailScreen(
     Scaffold(
         modifier = modifier.fillMaxSize(),
         topBar = {
-            TopAppBar(
-                title = {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(8.dp))
-                            .combinedClickable(
-                                onClick = {
-                                    if (!isBroadcast) {
-                                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                        aliasInput = existingContact?.customAlias ?: originalName
-                                        showEditContactDialog = true
-                                    }
-                                }
-                            )
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .size(38.dp)
-                                .clip(CircleShape)
-                                .background(if (isBroadcast) BlueChatPrimary else BlueChatGreen),
-                            contentAlignment = Alignment.Center
+            if (isSelectionMode) {
+                TopAppBar(
+                    title = {
+                        Text(
+                            text = "${selectedMessageIds.size} seleccionados",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold
+                        )
+                    },
+                    navigationIcon = {
+                        IconButton(
+                            onClick = {
+                                isSelectionMode = false
+                                selectedMessageIds = emptySet()
+                            }
                         ) {
-                            Text(
-                                text = initials,
-                                fontWeight = FontWeight.Bold,
-                                color = Color.White,
-                                fontSize = 16.sp
-                            )
+                            Icon(Icons.Default.Close, contentDescription = "Cancelar")
                         }
-
-                        Spacer(modifier = Modifier.width(10.dp))
-
-                        Column {
-                            Text(
-                                text = title,
-                                style = MaterialTheme.typography.titleMedium,
-                                fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.onSurface
-                            )
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Box(
-                                    modifier = Modifier
-                                        .size(6.dp)
-                                        .clip(CircleShape)
-                                        .background(BlueChatGreen)
+                    },
+                    actions = {
+                        IconButton(
+                            onClick = {
+                                selectedMessageIds = messages.map { it.id }.toSet()
+                            }
+                        ) {
+                            Icon(Icons.Default.SelectAll, contentDescription = "Seleccionar todos")
+                        }
+                        IconButton(
+                            onClick = {
+                                if (selectedMessageIds.isNotEmpty()) {
+                                    showBatchDeleteDialog = true
+                                }
+                            }
+                        ) {
+                            Icon(Icons.Default.Delete, contentDescription = "Eliminar", tint = BlueChatRed)
+                        }
+                    },
+                    colors = TopAppBarDefaults.topAppBarColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant
+                    )
+                )
+            } else {
+                TopAppBar(
+                    title = {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(8.dp))
+                                .combinedClickable(
+                                    onClick = {
+                                        if (!isBroadcast) {
+                                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                            aliasInput = existingContact?.customAlias ?: originalName
+                                            showEditContactDialog = true
+                                        }
+                                    }
                                 )
-                                Spacer(modifier = Modifier.width(4.dp))
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(38.dp)
+                                    .clip(CircleShape)
+                                    .background(if (isBroadcast) BlueChatPrimary else if (existingContact != null) BlueChatGreen else MaterialTheme.colorScheme.surfaceVariant),
+                                contentAlignment = Alignment.Center
+                            ) {
                                 Text(
-                                    text = if (isBroadcast) "Malla Bluetooth • Abierto" else "Cifrado E2EE • Offline",
-                                    fontSize = 11.sp,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    text = initials,
+                                    fontWeight = FontWeight.Bold,
+                                    color = if (isBroadcast || existingContact != null) Color.White else MaterialTheme.colorScheme.onSurfaceVariant,
+                                    fontSize = 16.sp
                                 )
                             }
+
+                            Spacer(modifier = Modifier.width(10.dp))
+
+                            Column {
+                                Text(
+                                    text = title,
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(6.dp)
+                                            .clip(CircleShape)
+                                            .background(
+                                                when {
+                                                    isEmergencyModeActive -> BlueChatRed
+                                                    existingContact != null -> BlueChatGreen
+                                                    else -> BlueChatAmber
+                                                }
+                                            )
+                                    )
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text(
+                                        text = when {
+                                            isEmergencyModeActive -> "🚨 Emergencia por Internet"
+                                            isBroadcast -> "Malla Local • Canal Abierto"
+                                            existingContact != null -> "Contacto Guardado • E2EE"
+                                            else -> "Dispositivo Cercano (Sin guardar)"
+                                        },
+                                        fontSize = 11.sp,
+                                        fontWeight = if (isEmergencyModeActive) FontWeight.Bold else FontWeight.Normal,
+                                        color = if (isEmergencyModeActive) BlueChatRed else MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
                         }
-                    }
-                },
-                navigationIcon = {
-                    IconButton(
-                        onClick = {
-                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                            onBack()
-                        },
-                        modifier = Modifier.testTag("chat_back_button")
-                    ) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "Volver",
-                            tint = MaterialTheme.colorScheme.onSurface
-                        )
-                    }
-                },
-                actions = {
-                    IconButton(
-                        onClick = {
-                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                            viewModel.showClearChatConfirmDialog.value = true
-                        },
-                        modifier = Modifier.testTag("clear_chat_button")
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.DeleteSweep,
-                            contentDescription = "Vaciar chat",
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.surface
+                    },
+                    navigationIcon = {
+                        IconButton(
+                            onClick = {
+                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                onBack()
+                            },
+                            modifier = Modifier.testTag("chat_back_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                                contentDescription = "Volver",
+                                tint = MaterialTheme.colorScheme.onSurface
+                            )
+                        }
+                    },
+                    actions = {
+                        if (!isBroadcast && existingContact == null) {
+                            TextButton(
+                                onClick = {
+                                    aliasInput = originalName
+                                    showEditContactDialog = true
+                                }
+                            ) {
+                                Icon(Icons.Default.PersonAdd, contentDescription = null, modifier = Modifier.size(16.dp), tint = BlueChatPrimary)
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("Guardar", color = BlueChatPrimary, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                            }
+                        }
+                        IconButton(
+                            onClick = {
+                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                viewModel.showClearChatConfirmDialog.value = true
+                            },
+                            modifier = Modifier.testTag("clear_chat_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.DeleteSweep,
+                                contentDescription = "Vaciar chat",
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    },
+                    colors = TopAppBarDefaults.topAppBarColors(
+                        containerColor = MaterialTheme.colorScheme.surface
+                    )
                 )
-            )
+            }
         },
         bottomBar = {
             // Messenger input bar configured to dynamically sit above the soft keyboard
@@ -437,13 +531,37 @@ fun ChatDetailScreen(
                 verticalArrangement = Arrangement.spacedBy(6.dp)
             ) {
                 items(messages, key = { it.id }) { message ->
+                    val isSelected = selectedMessageIds.contains(message.id)
                     ChatMessageItem(
                         message = message,
                         playerState = playerState,
+                        isSelectionMode = isSelectionMode,
+                        isSelected = isSelected,
+                        onToggleSelect = {
+                            selectedMessageIds = if (isSelected) {
+                                selectedMessageIds - message.id
+                            } else {
+                                selectedMessageIds + message.id
+                            }
+                            if (selectedMessageIds.isEmpty()) {
+                                isSelectionMode = false
+                            }
+                        },
                         onPlayAudio = { path -> viewModel.playAudio(path) },
                         onMessageLongClick = { msg ->
                             haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                            selectedMessageForOptions = msg
+                            if (isSelectionMode) {
+                                selectedMessageIds = if (selectedMessageIds.contains(msg.id)) {
+                                    selectedMessageIds - msg.id
+                                } else {
+                                    selectedMessageIds + msg.id
+                                }
+                                if (selectedMessageIds.isEmpty()) {
+                                    isSelectionMode = false
+                                }
+                            } else {
+                                selectedMessageForOptions = msg
+                            }
                         }
                     )
                 }
@@ -451,7 +569,7 @@ fun ChatDetailScreen(
         }
     }
 
-    // Message options dialog: Delete for me, Delete for everyone, Copy
+    // Message options dialog: Delete for me, Delete for everyone, Select, Copy
     selectedMessageForOptions?.let { msg ->
         val isDeletedText = msg.text == "🚫 Este mensaje fue eliminado"
         AlertDialog(
@@ -472,6 +590,19 @@ fun ChatDetailScreen(
                             Spacer(modifier = Modifier.width(10.dp))
                             Text("Copiar texto", color = MaterialTheme.colorScheme.onSurface)
                         }
+                    }
+
+                    TextButton(
+                        onClick = {
+                            isSelectionMode = true
+                            selectedMessageIds = setOf(msg.id)
+                            selectedMessageForOptions = null
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Icon(Icons.Default.SelectAll, contentDescription = null, tint = BlueChatPrimary)
+                        Spacer(modifier = Modifier.width(10.dp))
+                        Text("Seleccionar mensajes", color = MaterialTheme.colorScheme.onSurface)
                     }
 
                     TextButton(
@@ -504,6 +635,67 @@ fun ChatDetailScreen(
             confirmButton = {},
             dismissButton = {
                 TextButton(onClick = { selectedMessageForOptions = null }) {
+                    Text("Cancelar")
+                }
+            }
+        )
+    }
+
+    // Batch delete confirmation dialog
+    if (showBatchDeleteDialog) {
+        val selectedEntities = remember(selectedMessageIds, messages) {
+            messages.filter { it.id in selectedMessageIds }
+        }
+        val hasOutgoing = selectedEntities.any { it.isOutgoing && it.text != "🚫 Este mensaje fue eliminado" }
+
+        AlertDialog(
+            onDismissRequest = { showBatchDeleteDialog = false },
+            icon = { Icon(Icons.Default.Delete, contentDescription = null, tint = BlueChatRed) },
+            title = {
+                Text("¿Eliminar ${selectedMessageIds.size} mensaje(s)?", fontWeight = FontWeight.Bold)
+            },
+            text = {
+                Column {
+                    Text("Puedes eliminar los mensajes seleccionados de tu almacenamiento local (\"Para mí\") o removerlos para todos los usuarios si los enviaste tú (\"Para todos\").")
+                }
+            },
+            confirmButton = {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (hasOutgoing) {
+                        Button(
+                            onClick = {
+                                val outgoingPacketIds = selectedEntities
+                                    .filter { it.isOutgoing && it.text != "🚫 Este mensaje fue eliminado" }
+                                    .map { it.packetId }
+                                viewModel.deleteMultipleMessagesForEveryone(conversationId, outgoingPacketIds)
+                                viewModel.deleteMultipleMessagesForMe(selectedMessageIds.toList())
+                                isSelectionMode = false
+                                selectedMessageIds = emptySet()
+                                showBatchDeleteDialog = false
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = BlueChatRed)
+                        ) {
+                            Text("Para todos", fontWeight = FontWeight.Bold)
+                        }
+                    }
+                    Button(
+                        onClick = {
+                            viewModel.deleteMultipleMessagesForMe(selectedMessageIds.toList())
+                            isSelectionMode = false
+                            selectedMessageIds = emptySet()
+                            showBatchDeleteDialog = false
+                        },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.errorContainer,
+                            contentColor = MaterialTheme.colorScheme.onErrorContainer
+                        )
+                    ) {
+                        Text("Para mí")
+                    }
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showBatchDeleteDialog = false }) {
                     Text("Cancelar")
                 }
             }
@@ -587,6 +779,9 @@ fun ChatDetailScreen(
 fun ChatMessageItem(
     message: MessageEntity,
     playerState: com.example.audio.PlayerState,
+    isSelectionMode: Boolean = false,
+    isSelected: Boolean = false,
+    onToggleSelect: () -> Unit = {},
     onPlayAudio: (String) -> Unit,
     onMessageLongClick: (MessageEntity) -> Unit = {}
 ) {
@@ -603,48 +798,78 @@ fun ChatMessageItem(
 
     val isDeleted = message.text == "🚫 Este mensaje fue eliminado"
 
-    Column(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalAlignment = bubbleAlignment
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .background(if (isSelected) BlueChatPrimary.copy(alpha = 0.12f) else Color.Transparent)
+            .clickable(enabled = isSelectionMode) { onToggleSelect() }
+            .padding(vertical = 2.dp, horizontal = if (isSelected) 4.dp else 0.dp),
+        verticalAlignment = Alignment.CenterVertically
     ) {
-        if (!isOut) {
-            val (_, name) = MeshNode.parseNodeId(message.senderNodeId)
-            Text(
-                text = message.senderDisplayName.ifBlank { name },
-                style = MaterialTheme.typography.bodySmall,
-                fontSize = 11.sp,
-                fontWeight = FontWeight.SemiBold,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(start = 6.dp, bottom = 2.dp)
-            )
+        if (isSelectionMode) {
+            IconButton(
+                onClick = onToggleSelect,
+                modifier = Modifier.size(36.dp)
+            ) {
+                Icon(
+                    imageVector = if (isSelected) Icons.Default.CheckCircle else Icons.Default.RadioButtonUnchecked,
+                    contentDescription = if (isSelected) "Seleccionado" else "No seleccionado",
+                    tint = if (isSelected) BlueChatPrimary else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                    modifier = Modifier.size(22.dp)
+                )
+            }
+            Spacer(modifier = Modifier.width(4.dp))
         }
 
-        Box(
-            modifier = Modifier
-                .clip(bubbleShape)
-                .background(
-                    if (isOut) {
-                        if (isDeleted) BlueChatPrimary.copy(alpha = 0.5f) else BlueChatPrimary
-                    } else {
-                        if (isDeleted) MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f) else MaterialTheme.colorScheme.surfaceVariant
-                    }
-                )
-                .combinedClickable(
-                    onClick = { onMessageLongClick(message) },
-                    onLongClick = { onMessageLongClick(message) }
-                )
-                .padding(horizontal = 12.dp, vertical = 8.dp)
+        Column(
+            modifier = Modifier.weight(1f),
+            horizontalAlignment = bubbleAlignment
         ) {
-            Column {
-                if (message.audioFilePath != null && !isDeleted) {
-                    VoiceNoteBubble(
-                        audioFilePath = message.audioFilePath,
-                        durationSec = message.audioDurationSec,
-                        isOutgoing = isOut,
-                        playerState = playerState,
-                        onPlayClick = { onPlayAudio(message.audioFilePath) }
+            if (!isOut) {
+                val (_, name) = MeshNode.parseNodeId(message.senderNodeId)
+                Text(
+                    text = message.senderDisplayName.ifBlank { name },
+                    style = MaterialTheme.typography.bodySmall,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(start = 6.dp, bottom = 2.dp)
+                )
+            }
+
+            Box(
+                modifier = Modifier
+                    .clip(bubbleShape)
+                    .background(
+                        if (isOut) {
+                            if (isDeleted) BlueChatPrimary.copy(alpha = 0.5f) else BlueChatPrimary
+                        } else {
+                            if (isDeleted) MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f) else MaterialTheme.colorScheme.surfaceVariant
+                        }
                     )
-                } else if (message.text != null) {
+                    .combinedClickable(
+                        onClick = {
+                            if (isSelectionMode) {
+                                onToggleSelect()
+                            } else {
+                                onMessageLongClick(message)
+                            }
+                        },
+                        onLongClick = { onMessageLongClick(message) }
+                    )
+                    .padding(horizontal = 12.dp, vertical = 8.dp)
+            ) {
+                Column {
+                    if (message.audioFilePath != null && !isDeleted) {
+                        VoiceNoteBubble(
+                            audioFilePath = message.audioFilePath,
+                            durationSec = message.audioDurationSec,
+                            isOutgoing = isOut,
+                            playerState = playerState,
+                            onPlayClick = { onPlayAudio(message.audioFilePath) }
+                        )
+                    } else if (message.text != null) {
                     Text(
                         text = message.text,
                         style = MaterialTheme.typography.bodyMedium,
@@ -707,4 +932,5 @@ fun ChatMessageItem(
             }
         }
     }
+}
 }

@@ -101,6 +101,10 @@ class MeshViewModel(application: Application) : AndroidViewModel(application) {
     val recordingDurationSeconds: StateFlow<Int> = _recordingDurationSeconds.asStateFlow()
     private var recordingTimerJob: Job? = null
 
+    // Dual Transport & Emergency Mode States
+    val isWifiP2pEnabled: StateFlow<Boolean> = repository.meshEngine.wifiDirectManager.isWifiP2pEnabled
+    val emergencyInternetChatId: StateFlow<String?> = repository.meshEngine.emergencyInternetChatId.asStateFlow()
+
     // Dialogs
     val showNewChatDialog = MutableStateFlow(false)
     val showAddContactNode = MutableStateFlow<MeshNode?>(null)
@@ -108,6 +112,7 @@ class MeshViewModel(application: Application) : AndroidViewModel(application) {
     val showClearChatConfirmDialog = MutableStateFlow(false)
     val showEditIdentityDialog = MutableStateFlow(false)
     val showApkShareDialog = MutableStateFlow(false)
+    val showEmergencyUtilityDialog = MutableStateFlow(false)
     val showClearDevDataConfirmDialog = MutableStateFlow(false)
 
     // Current user info
@@ -229,11 +234,41 @@ class MeshViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun deleteMultipleMessagesForMe(messageIds: List<Long>) {
+        viewModelScope.launch {
+            repository.deleteMultipleMessagesLocally(messageIds)
+        }
+    }
+
     fun deleteMessageForEveryone(packetId: String) {
         val chatId = _activeChatId.value ?: return
         viewModelScope.launch {
             repository.deleteMessageForEveryone(chatId, packetId)
         }
+    }
+
+    fun deleteMultipleMessagesForEveryone(chatId: String, packetIds: List<String>) {
+        viewModelScope.launch {
+            repository.deleteMultipleMessagesForEveryone(chatId, packetIds)
+        }
+    }
+
+    fun deleteChatConversation(conversationId: String) {
+        viewModelScope.launch {
+            repository.clearConversation(conversationId)
+            if (_activeChatId.value == conversationId) {
+                closeChat()
+            }
+        }
+    }
+
+    fun activateEmergencyInternetModeForChat(chatId: String) {
+        repository.meshEngine.emergencyInternetChatId.value = chatId
+        openChat(chatId)
+    }
+
+    fun deactivateEmergencyInternetMode() {
+        repository.meshEngine.emergencyInternetChatId.value = null
     }
 
     fun startVoiceRecording() {
@@ -385,6 +420,7 @@ class MeshViewModel(application: Application) : AndroidViewModel(application) {
             MeshForegroundService.start(getApplication())
         }
         repository.meshEngine.bluetoothManager.startMeshRadio()
+        repository.meshEngine.wifiDirectManager.startWifiDirectTransport()
     }
 
     /**

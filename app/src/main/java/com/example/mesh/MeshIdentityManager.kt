@@ -60,6 +60,6 @@ class MeshIdentityManager(context: Context) {
         set(value) = prefs.edit().putBoolean(KEY_AUTO_RELAY, value).apply()
 
     var isSimulatorEnabled: Boolean
-        get() = prefs.getBoolean(KEY_SIMULATOR_ENABLED, true)
+        get() = prefs.getBoolean(KEY_SIMULATOR_ENABLED, false)
         set(value) = prefs.edit().putBoolean(KEY_SIMULATOR_ENABLED, value).apply()
 }

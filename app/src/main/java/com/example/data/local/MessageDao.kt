@@ -29,6 +29,12 @@ interface MessageDao {
     @Query("DELETE FROM messages WHERE id = :id")
     suspend fun deleteMessageById(id: Long)
 
+    @Query("DELETE FROM messages WHERE id IN (:ids)")
+    suspend fun deleteMessagesByIds(ids: List<Long>)
+
+    @Query("SELECT * FROM messages WHERE id IN (:ids)")
+    suspend fun getMessagesByIds(ids: List<Long>): List<MessageEntity>
+
     @Query("DELETE FROM messages WHERE packetId = :packetId")
     suspend fun deleteMessageByPacketId(packetId: String)
 

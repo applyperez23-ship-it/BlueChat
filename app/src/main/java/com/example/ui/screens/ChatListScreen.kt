@@ -8,7 +8,9 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -30,13 +32,17 @@ import androidx.compose.material.icons.automirrored.filled.Chat
 import androidx.compose.material.icons.filled.Bluetooth
 import androidx.compose.material.icons.filled.BluetoothDisabled
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.DoneAll
 import androidx.compose.material.icons.filled.Hub
+import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.PersonAdd
+import androidx.compose.material.icons.filled.Radar
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Sync
+import androidx.compose.material.icons.filled.WarningAmber
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -79,15 +85,17 @@ import com.example.data.model.DeliveryStatus
 import com.example.data.model.MeshNode
 import com.example.data.model.MeshPacket
 import com.example.mesh.MeshConnectionStatus
+import com.example.ui.components.EmergencyUtilityDialog
 import com.example.ui.theme.BlueChatAmber
 import com.example.ui.theme.BlueChatGreen
 import com.example.ui.theme.BlueChatPrimary
+import com.example.ui.theme.BlueChatRed
 import com.example.ui.viewmodel.MeshViewModel
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun ChatListScreen(
     viewModel: MeshViewModel,
@@ -101,12 +109,14 @@ fun ChatListScreen(
     val activeNodes by viewModel.activeNodes.collectAsState()
     val isBtEnabled by viewModel.isBluetoothEnabled.collectAsState()
     val connectionStatus by viewModel.connectionStatus.collectAsState()
-    val showApkShareDialog by viewModel.showApkShareDialog.collectAsState()
+    val showEmergencyUtilityDialog by viewModel.showEmergencyUtilityDialog.collectAsState()
+    val emergencyChatId by viewModel.emergencyInternetChatId.collectAsState()
 
     var searchQuery by remember { mutableStateOf("") }
     var isSearchActive by remember { mutableStateOf(false) }
+    var chatToDelete by remember { mutableStateOf<String?>(null) }
 
-    // Triple-tap hidden gesture on "BlueChat" title to share local APK file
+    // Triple-tap hidden gesture on "BlueChat" title to open advanced emergency & utility menu
     var titleTapCount by remember { mutableIntStateOf(0) }
     var lastTitleTapTime by remember { mutableLongStateOf(0L) }
 
@@ -117,7 +127,7 @@ fun ChatListScreen(
             if (titleTapCount >= 3) {
                 titleTapCount = 0
                 haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                viewModel.showApkShareDialog.value = true
+                viewModel.showEmergencyUtilityDialog.value = true
             }
         } else {
             titleTapCount = 1
@@ -239,6 +249,23 @@ fun ChatListScreen(
                                             else -> BlueChatAmber
                                         }
                                     )
+                                }
+                            }
+
+                            if (emergencyChatId != null) {
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Box(
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(12.dp))
+                                        .background(BlueChatRed.copy(alpha = 0.18f))
+                                        .clickable { viewModel.showEmergencyUtilityDialog.value = true }
+                                        .padding(horizontal = 7.dp, vertical = 3.dp)
+                                ) {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Icon(Icons.Default.WarningAmber, contentDescription = null, tint = BlueChatRed, modifier = Modifier.size(11.dp))
+                                        Spacer(modifier = Modifier.width(3.dp))
+                                        Text("🚨 Emergencia", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = BlueChatRed)
+                                    }
                                 }
                             }
                         }
@@ -502,6 +529,9 @@ fun ChatListScreen(
                     val isOnline = activeNode != null
                     val initials = displayName.trim().take(1).uppercase()
 
+                    val isSavedContact = (contact != null)
+                    val isDiscoveredPeer = (activeNode != null && contact == null)
+
                     ChatListItem(
                         title = displayName,
                         subtitle = latestMsg?.text
@@ -513,6 +543,9 @@ fun ChatListScreen(
                         hash = hash,
                         deliveryStatus = latestMsg?.status,
                         isOutgoing = latestMsg?.isOutgoing ?: false,
+                        isSavedContact = isSavedContact,
+                        isDiscoveredPeer = isDiscoveredPeer,
+                        onSaveContact = if (isDiscoveredPeer && activeNode != null) { { viewModel.showAddContactNode.value = activeNode } } else null,
                         onClick = {
                             haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                             viewModel.openChat(
@@ -524,6 +557,10 @@ fun ChatListScreen(
                                     customAlias = contact?.customAlias
                                 )
                             )
+                        },
+                        onLongClick = {
+                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                            chatToDelete = targetNodeId
                         }
                     )
 
@@ -540,54 +577,59 @@ fun ChatListScreen(
         }
     }
 
-    // Hidden menu dialog triggered by triple-tapping "BlueChat"
-    if (showApkShareDialog) {
+    // Confirmation dialog to delete a conversation
+    if (chatToDelete != null) {
+        val targetId = chatToDelete!!
+        val isContact = contacts.any { it.nodeId == targetId }
+        val targetName = contacts.firstOrNull { it.nodeId == targetId }?.customAlias
+            ?: activeNodes[targetId]?.effectiveName
+            ?: MeshNode.parseNodeId(targetId).second
+
         AlertDialog(
-            onDismissRequest = { viewModel.showApkShareDialog.value = false },
-            title = {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Default.Share, contentDescription = null, tint = BlueChatPrimary)
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text("Compartir APK de BlueChat", fontWeight = FontWeight.Bold)
-                }
-            },
+            onDismissRequest = { chatToDelete = null },
+            icon = { Icon(Icons.Default.Delete, contentDescription = null, tint = BlueChatRed) },
+            title = { Text("¿Eliminar conversación?", fontWeight = FontWeight.Bold) },
             text = {
                 Column {
-                    Text(
-                        text = "Transfiere el instalador de BlueChat directamente a dispositivos cercanos para que puedan conectarse a tu red de malla Bluetooth sin requerir internet.",
-                        fontSize = 13.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Spacer(modifier = Modifier.height(14.dp))
-                    Button(
-                        onClick = {
-                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                            viewModel.showApkShareDialog.value = false
-                            viewModel.shareApkFile(context)
-                        },
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(12.dp),
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = BlueChatPrimary,
-                            contentColor = Color.White
-                        )
-                    ) {
-                        Icon(Icons.Default.Bluetooth, contentDescription = null, modifier = Modifier.size(18.dp))
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text("Enviar APK (Bluetooth / Compartir)")
+                    Text("Se borrarán todos los mensajes de '$targetName' de tu almacenamiento local.")
+                    if (isContact) {
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Text("Nota: El contacto seguirá guardado en tu agenda.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
             },
-            confirmButton = {},
+            confirmButton = {
+                Button(
+                    onClick = {
+                        val id = chatToDelete
+                        chatToDelete = null
+                        if (id != null) {
+                            viewModel.deleteChatConversation(id)
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = BlueChatRed)
+                ) {
+                    Text("Eliminar")
+                }
+            },
             dismissButton = {
-                TextButton(onClick = { viewModel.showApkShareDialog.value = false }) {
-                    Text("Cerrar")
+                TextButton(onClick = { chatToDelete = null }) {
+                    Text("Cancelar")
                 }
             }
         )
     }
+
+    // Hidden Advanced Management Menu Dialog triggered by triple-tapping "BlueChat"
+    if (showEmergencyUtilityDialog) {
+        EmergencyUtilityDialog(
+            viewModel = viewModel,
+            onDismiss = { viewModel.showEmergencyUtilityDialog.value = false }
+        )
+    }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun ChatListItem(
     title: String,
@@ -599,12 +641,19 @@ fun ChatListItem(
     hash: String? = null,
     deliveryStatus: DeliveryStatus? = null,
     isOutgoing: Boolean = false,
+    isSavedContact: Boolean = false,
+    isDiscoveredPeer: Boolean = false,
+    onSaveContact: (() -> Unit)? = null,
+    onLongClick: (() -> Unit)? = null,
     onClick: () -> Unit
 ) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable { onClick() }
+            .combinedClickable(
+                onClick = { onClick() },
+                onLongClick = { onLongClick?.invoke() }
+            )
             .padding(horizontal = 16.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -642,14 +691,62 @@ fun ChatListItem(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text(
-                    text = title,
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.SemiBold,
-                    color = MaterialTheme.colorScheme.onSurface,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.weight(1f, fill = false)
+                ) {
+                    Text(
+                        text = title,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+
+                    if (isSavedContact) {
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(4.dp))
+                                .background(BlueChatGreen.copy(alpha = 0.15f))
+                                .padding(horizontal = 5.dp, vertical = 2.dp)
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(Icons.Default.Person, contentDescription = null, tint = BlueChatGreen, modifier = Modifier.size(10.dp))
+                                Spacer(modifier = Modifier.width(2.dp))
+                                Text("Guardado", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = BlueChatGreen)
+                            }
+                        }
+                    } else if (isDiscoveredPeer) {
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(4.dp))
+                                .background(BlueChatAmber.copy(alpha = 0.18f))
+                                .padding(horizontal = 5.dp, vertical = 2.dp)
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(Icons.Default.Radar, contentDescription = null, tint = BlueChatAmber, modifier = Modifier.size(10.dp))
+                                Spacer(modifier = Modifier.width(2.dp))
+                                Text("Cercano", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = BlueChatAmber)
+                            }
+                        }
+                        if (onSaveContact != null) {
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                text = "+ Guardar",
+                                fontSize = 10.sp,
+                                color = BlueChatPrimary,
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(4.dp))
+                                    .clickable { onSaveContact() }
+                                    .padding(horizontal = 4.dp, vertical = 2.dp)
+                            )
+                        }
+                    }
+                }
 
                 if (time.isNotBlank()) {
                     Text(
