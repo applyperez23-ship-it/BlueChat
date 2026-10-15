@@ -26,9 +26,10 @@
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
 
-    <!-- Audio Recording for Compressed Voice Notes -->
-    <!-- Audio Recording for Compressed Voice Notes -->
+    <!-- Audio Recording & Call Settings -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
 
     <!-- Wi-Fi Direct / Local P2P Mesh -->
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
@@ -62,6 +63,12 @@
     <uses-feature
         android:name="android.hardware.microphone"
         android:required="false" />
+    <uses-feature
+        android:name="android.hardware.camera"
+        android:required="false" />
+    <uses-feature
+        android:name="android.hardware.camera.front"
+        android:required="false" />
 
     <application
         android:allowBackup="true"
@@ -90,6 +97,17 @@
             android:enabled="true"
             android:exported="false"
             android:foregroundServiceType="connectedDevice" />
+
+        <service
+            android:name=".mesh.BlueChatQuickTileService"
+            android:icon="@drawable/ic_launcher_foreground"
+            android:label="BlueChat Malla"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+        </service>
 
         <receiver
             android:name=".mesh.NotificationReplyReceiver"

@@ -21,6 +21,10 @@ import java.io.File
 import java.io.FileOutputStream
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.CopyOnWriteArrayList
+import com.example.call.LocalCallManager
+import com.example.call.CallState
+import com.example.call.CallType
 
 class MeshEngine(
     private val context: Context,
@@ -35,12 +39,23 @@ class MeshEngine(
     private val scope = CoroutineScope(Dispatchers.IO)
     private val processedPacketCache = ConcurrentHashMap<String, Long>()
 
+    // Dead Drop Storage (Buzón Ciego): Retain packets for target nodes until signals cross paths
+    private val deadDropStore = ConcurrentHashMap<String, CopyOnWriteArrayList<MeshPacket>>()
+
     // Bluetooth manager
     lateinit var bluetoothManager: BluetoothMeshManager
         private set
 
     // Wi-Fi Direct manager (Dual local transport)
     lateinit var wifiDirectManager: WifiDirectMeshManager
+        private set
+
+    // Ultra-fast Local UDP Multicast/Broadcast Transport
+    lateinit var udpTransport: LocalUdpMeshTransport
+        private set
+
+    // P2P Voice and Video Call Manager
+    lateinit var callManager: LocalCallManager
         private set
 
     // Simulator
@@ -76,6 +91,18 @@ class MeshEngine(
             onPacketReceived = { packet -> onIncomingPacket(packet) }
         )
 
+        udpTransport = LocalUdpMeshTransport(
+            context = context,
+            identityManager = identityManager,
+            onPacketReceived = { packet -> onIncomingPacket(packet) },
+            onPeerDiscovered = { node ->
+                val current = _activeNodesMap.value.toMutableMap()
+                current[node.nodeId] = node
+                _activeNodesMap.value = current
+            }
+        )
+        udpTransport.start()
+
         simulator = MeshSimulator(
             identityManager = identityManager,
             onSimulatedPacketForLocalNode = { packet -> onIncomingPacket(packet) },
@@ -93,6 +120,10 @@ class MeshEngine(
             }
         )
 
+        callManager = LocalCallManager(context) { dest, type, payload ->
+            sendCallControlPacket(dest, type, payload)
+        }
+
         // Observe discovered nodes from bluetooth and Wi-Fi Direct
         scope.launch {
             bluetoothManager.discoveredNodes.collect {
@@ -107,6 +138,19 @@ class MeshEngine(
         }
 
         refreshNodesWithSimulator()
+    }
+
+    fun startMeshRadio() {
+        bluetoothManager.startMeshRadio()
+        wifiDirectManager.startWifiDirectTransport()
+        udpTransport.start()
+        syncAllNodes()
+    }
+
+    fun stopMeshRadio() {
+        bluetoothManager.stopMeshRadio()
+        wifiDirectManager.stopWifiDirectTransport()
+        udpTransport.stop()
     }
 
     fun refreshNodesWithSimulator() {
@@ -127,6 +171,28 @@ class MeshEngine(
             merged[id] = node
         }
         _activeNodesMap.value = merged
+
+        // Dead Drop auto-delivery: Check if any discovered node has buffered dead drop packets
+        for (nodeId in merged.keys) {
+            val pendingPackets = deadDropStore.remove(nodeId)
+            if (!pendingPackets.isNullOrEmpty()) {
+                scope.launch {
+                    for (pkt in pendingPackets) {
+                        forwardOverRadio(pkt)
+                        recordPacketLog(
+                            packetId = pkt.packetId,
+                            src = pkt.sourceNodeId,
+                            dst = pkt.destNodeId,
+                            type = pkt.type.name,
+                            action = "DEAD_DROP_DELIVERED",
+                            hops = pkt.hopCount,
+                            ttl = pkt.ttl,
+                            size = pkt.encryptedPayload.length
+                        )
+                    }
+                }
+            }
+        }
     }
 
     /**
@@ -279,11 +345,60 @@ class MeshEngine(
                             context = context,
                             conversationId = packet.sourceNodeId,
                             senderName = senderName,
-                            messageText = "Nota de voz recibida",
+                            messageText = "[Nota de voz recibida]",
                             isVoiceNote = true
                         )
                     }
                 }
+
+                PacketType.CALL_AWAKEN,
+                PacketType.CALL_OFFER -> {
+                    val isVideo = packet.encryptedPayload == "VIDEO"
+                    val senderName = packet.senderDisplayName.ifBlank { packet.sourceNodeId }
+                    val isWifiNeeded = !callManager.isWifiEnabled()
+                    NotificationHelper.showIncomingCallNotification(
+                        context = context,
+                        callerId = packet.sourceNodeId,
+                        callerName = senderName,
+                        isVideo = isVideo,
+                        isWifiNeeded = isWifiNeeded
+                    )
+                    callManager.onIncomingCall(packet.sourceNodeId, senderName, isVideo)
+                }
+
+                PacketType.CALL_ANSWER -> {
+                    callManager.onCallAnswered()
+                }
+
+                PacketType.CALL_END -> {
+                    if (callManager.callState.value == CallState.INCOMING_RINGING) {
+                        val callerId = callManager.remotePeerId.value ?: packet.sourceNodeId
+                        val isVideo = callManager.callType.value == CallType.VIDEO
+                        val callerName = callManager.remotePeerName.value.ifBlank { callerId }
+                        scope.launch {
+                            val missedMsg = MessageEntity(
+                                packetId = UUID.randomUUID().toString(),
+                                conversationId = callerId,
+                                senderNodeId = callerId,
+                                senderDisplayName = callerName,
+                                recipientNodeId = identityManager.nodeId,
+                                isOutgoing = false,
+                                text = "Llamada perdida (${if (isVideo) "Video" else "Audio"})",
+                                audioFilePath = null,
+                                timestamp = System.currentTimeMillis(),
+                                status = DeliveryStatus.DELIVERED,
+                                hopCount = packet.hopCount
+                            )
+                            database.messageDao().insertMessage(missedMsg)
+                        }
+                    }
+                    callManager.onCallEndedByPeer()
+                }
+
+                PacketType.PING -> {
+                    // Node presence heartbeat received
+                }
+
                 else -> {}
             }
 
@@ -437,11 +552,36 @@ class MeshEngine(
             size = forwardedPacket.encryptedPayload.length
         )
 
+        // Dead Drop Storage (Buzón Ciego): Retain a copy locally in case destination crosses paths later
+        if (forwardedPacket.destNodeId != MeshPacket.BROADCAST_DEST) {
+            val pendingList = deadDropStore.getOrPut(forwardedPacket.destNodeId) { CopyOnWriteArrayList() }
+            if (pendingList.none { it.packetId == forwardedPacket.packetId }) {
+                pendingList.add(forwardedPacket)
+            }
+        }
+
         forwardOverRadio(forwardedPacket)
     }
 
+    fun sendCallControlPacket(destNodeId: String, type: PacketType, payload: String) {
+        val packet = MeshPacket(
+            packetId = UUID.randomUUID().toString(),
+            sourceNodeId = identityManager.nodeId,
+            destNodeId = destNodeId,
+            ttl = identityManager.maxTtl,
+            hopCount = 0,
+            type = type,
+            encryptedPayload = payload,
+            iv = "",
+            timestamp = System.currentTimeMillis(),
+            senderDisplayName = identityManager.userName
+        )
+        forwardOverRadio(packet)
+    }
+
     private fun forwardOverRadio(packet: MeshPacket) {
-        // Dual Local Transport Layer: Bluetooth LE/Classic + Wi-Fi Direct (P2P)
+        // High priority background broadcast across all radio channels simultaneously
+        udpTransport.broadcastPacket(packet)
         bluetoothManager.sendPacketOverBluetooth(packet)
         wifiDirectManager.broadcastPacket(packet)
 

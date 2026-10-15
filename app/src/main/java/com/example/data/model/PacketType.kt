@@ -6,5 +6,11 @@ enum class PacketType {
     ANNOUNCE,
     ACK,
     PING,
-    DELETE_MESSAGE
+    DELETE_MESSAGE,
+    CALL_AWAKEN,
+    CALL_OFFER,
+    CALL_ANSWER,
+    CALL_ICE,
+    CALL_END,
+    DEAD_DROP_RELAY
 }

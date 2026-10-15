@@ -7,6 +7,7 @@ import android.content.pm.PackageManager
 import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
@@ -17,6 +18,11 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.ui.draw.clip
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Chat
 import androidx.compose.material.icons.filled.Radar
@@ -34,6 +40,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.VerticalDivider
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -155,23 +162,11 @@ fun HomeScreen(
         }
     }
 
-    // If active chat is open, display detail screen
-    if (activeChatId != null) {
-        ChatDetailScreen(
-            conversationId = activeChatId!!,
-            peerNode = activePeer,
-            viewModel = viewModel,
-            onBack = { viewModel.closeChat() },
-            modifier = modifier
-        )
-        return
-    }
-
     BoxWithConstraints(modifier = modifier.fillMaxSize()) {
         val isWideScreen = maxWidth > 600.dp
 
         if (isWideScreen) {
-            // Adaptive Tablet / Landscape layout with NavigationRail
+            // Adaptive Tablet / Foldable layout (Canonical List-Detail Two-Panel Design)
             Row(modifier = Modifier.fillMaxSize()) {
                 NavigationRail(
                     containerColor = MaterialTheme.colorScheme.surface,
@@ -213,59 +208,138 @@ fun HomeScreen(
                     )
                 }
 
-                Box(modifier = Modifier.weight(1f).fillMaxHeight()) {
+                // Left Panel: Chat List / Radar / Settings (Master list)
+                Box(
+                    modifier = Modifier
+                        .widthIn(min = 340.dp, max = 380.dp)
+                        .fillMaxHeight()
+                ) {
                     ScreenContent(currentTab = currentTab, viewModel = viewModel)
+                }
+
+                // Vertical Divider between list and detail panes
+                VerticalDivider(
+                    color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
+                )
+
+                // Right Panel: Active Chat Thread or Welcome Placeholder
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxHeight()
+                ) {
+                    if (activeChatId != null) {
+                        ChatDetailScreen(
+                            conversationId = activeChatId!!,
+                            peerNode = activePeer,
+                            viewModel = viewModel,
+                            onBack = { viewModel.closeChat() },
+                            modifier = Modifier.fillMaxSize()
+                        )
+                    } else {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.25f)),
+                            contentAlignment = androidx.compose.ui.Alignment.Center
+                        ) {
+                            Column(
+                                horizontalAlignment = androidx.compose.ui.Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.Center,
+                                modifier = Modifier.padding(32.dp)
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(72.dp)
+                                        .clip(CircleShape)
+                                        .background(BlueChatPrimary.copy(alpha = 0.12f)),
+                                    contentAlignment = androidx.compose.ui.Alignment.Center
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.AutoMirrored.Filled.Chat,
+                                        contentDescription = null,
+                                        tint = BlueChatPrimary,
+                                        modifier = Modifier.size(36.dp)
+                                    )
+                                }
+                                Spacer(modifier = Modifier.height(16.dp))
+                                Text(
+                                    text = "Selecciona una conversación",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                                Spacer(modifier = Modifier.height(6.dp))
+                                Text(
+                                    text = "Elige un chat de la lista o descubre dispositivos cercanos para comunicarte por la red de malla local sin Internet.",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                                )
+                            }
+                        }
+                    }
                 }
             }
         } else {
-            // Streamlined Bottom NavigationBar
-            Scaffold(
-                bottomBar = {
-                    NavigationBar(
-                        containerColor = MaterialTheme.colorScheme.surface,
-                        tonalElevation = 6.dp
-                    ) {
-                        NavigationBarItem(
-                            selected = currentTab == MeshTab.CHATS,
-                            onClick = { viewModel.selectTab(MeshTab.CHATS) },
-                            icon = { Icon(Icons.AutoMirrored.Filled.Chat, contentDescription = "Chats") },
-                            label = { Text("Chats", fontSize = 12.sp, fontWeight = if (currentTab == MeshTab.CHATS) FontWeight.Bold else FontWeight.Normal) },
-                            colors = NavigationBarItemDefaults.colors(
-                                selectedIconColor = BlueChatPrimary,
-                                selectedTextColor = BlueChatPrimary,
-                                indicatorColor = BlueChatPrimary.copy(alpha = 0.12f)
-                            ),
-                            modifier = Modifier.testTag("tab_chats")
-                        )
-                        NavigationBarItem(
-                            selected = currentTab == MeshTab.RADAR,
-                            onClick = { viewModel.selectTab(MeshTab.RADAR) },
-                            icon = { Icon(Icons.Default.Radar, contentDescription = "Cercanos") },
-                            label = { Text("Cercanos", fontSize = 12.sp, fontWeight = if (currentTab == MeshTab.RADAR) FontWeight.Bold else FontWeight.Normal) },
-                            colors = NavigationBarItemDefaults.colors(
-                                selectedIconColor = BlueChatPrimary,
-                                selectedTextColor = BlueChatPrimary,
-                                indicatorColor = BlueChatPrimary.copy(alpha = 0.12f)
-                            ),
-                            modifier = Modifier.testTag("tab_radar")
-                        )
-                        NavigationBarItem(
-                            selected = currentTab == MeshTab.SETTINGS,
-                            onClick = { viewModel.selectTab(MeshTab.SETTINGS) },
-                            icon = { Icon(Icons.Default.Settings, contentDescription = "Ajustes") },
-                            label = { Text("Ajustes", fontSize = 12.sp, fontWeight = if (currentTab == MeshTab.SETTINGS) FontWeight.Bold else FontWeight.Normal) },
-                            colors = NavigationBarItemDefaults.colors(
-                                selectedIconColor = BlueChatPrimary,
-                                selectedTextColor = BlueChatPrimary,
-                                indicatorColor = BlueChatPrimary.copy(alpha = 0.12f)
-                            ),
-                            modifier = Modifier.testTag("tab_settings")
-                        )
+            // Compact screen (phones): Single-panel navigation
+            if (activeChatId != null) {
+                ChatDetailScreen(
+                    conversationId = activeChatId!!,
+                    peerNode = activePeer,
+                    viewModel = viewModel,
+                    onBack = { viewModel.closeChat() },
+                    modifier = Modifier.fillMaxSize()
+                )
+            } else {
+                Scaffold(
+                    bottomBar = {
+                        NavigationBar(
+                            containerColor = MaterialTheme.colorScheme.surface,
+                            tonalElevation = 6.dp
+                        ) {
+                            NavigationBarItem(
+                                selected = currentTab == MeshTab.CHATS,
+                                onClick = { viewModel.selectTab(MeshTab.CHATS) },
+                                icon = { Icon(Icons.AutoMirrored.Filled.Chat, contentDescription = "Chats") },
+                                label = { Text("Chats", fontSize = 12.sp, fontWeight = if (currentTab == MeshTab.CHATS) FontWeight.Bold else FontWeight.Normal) },
+                                colors = NavigationBarItemDefaults.colors(
+                                    selectedIconColor = BlueChatPrimary,
+                                    selectedTextColor = BlueChatPrimary,
+                                    indicatorColor = BlueChatPrimary.copy(alpha = 0.12f)
+                                ),
+                                modifier = Modifier.testTag("tab_chats")
+                            )
+                            NavigationBarItem(
+                                selected = currentTab == MeshTab.RADAR,
+                                onClick = { viewModel.selectTab(MeshTab.RADAR) },
+                                icon = { Icon(Icons.Default.Radar, contentDescription = "Cercanos") },
+                                label = { Text("Cercanos", fontSize = 12.sp, fontWeight = if (currentTab == MeshTab.RADAR) FontWeight.Bold else FontWeight.Normal) },
+                                colors = NavigationBarItemDefaults.colors(
+                                    selectedIconColor = BlueChatPrimary,
+                                    selectedTextColor = BlueChatPrimary,
+                                    indicatorColor = BlueChatPrimary.copy(alpha = 0.12f)
+                                ),
+                                modifier = Modifier.testTag("tab_radar")
+                            )
+                            NavigationBarItem(
+                                selected = currentTab == MeshTab.SETTINGS,
+                                onClick = { viewModel.selectTab(MeshTab.SETTINGS) },
+                                icon = { Icon(Icons.Default.Settings, contentDescription = "Ajustes") },
+                                label = { Text("Ajustes", fontSize = 12.sp, fontWeight = if (currentTab == MeshTab.SETTINGS) FontWeight.Bold else FontWeight.Normal) },
+                                colors = NavigationBarItemDefaults.colors(
+                                    selectedIconColor = BlueChatPrimary,
+                                    selectedTextColor = BlueChatPrimary,
+                                    indicatorColor = BlueChatPrimary.copy(alpha = 0.12f)
+                                ),
+                                modifier = Modifier.testTag("tab_settings")
+                            )
+                        }
                     }
-                }
-            ) { padding ->
-                Box(modifier = Modifier.fillMaxSize().padding(padding)) {
-                    ScreenContent(currentTab = currentTab, viewModel = viewModel)
+                ) { padding ->
+                    Box(modifier = Modifier.fillMaxSize().padding(padding)) {
+                        ScreenContent(currentTab = currentTab, viewModel = viewModel)
+                    }
                 }
             }
         }

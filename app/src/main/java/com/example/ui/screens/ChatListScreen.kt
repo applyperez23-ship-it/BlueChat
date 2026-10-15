@@ -162,11 +162,9 @@ fun ChatListScreen(
     val directConversationIds = remember(latestMessageByConversation) {
         latestMessageByConversation.keys.filter { it != MeshPacket.BROADCAST_DEST }
     }
-    val allDirectNodeIds = remember(contacts, directConversationIds, activeNodes) {
-        (contacts.map { it.nodeId } + directConversationIds + activeNodes.keys).distinct()
-    }
-    val sortedDirectNodeIds = remember(allDirectNodeIds, latestMessageByConversation) {
-        allDirectNodeIds.sortedByDescending { targetId ->
+    // Only show conversations with active message threads so deleted chats are completely purged
+    val sortedDirectNodeIds = remember(directConversationIds, latestMessageByConversation) {
+        directConversationIds.sortedByDescending { targetId ->
             latestMessageByConversation[targetId]?.timestamp ?: 0L
         }
     }
@@ -208,15 +206,17 @@ fun ChatListScreen(
                                     .padding(vertical = 4.dp, horizontal = 2.dp)
                             )
                             Spacer(modifier = Modifier.width(8.dp))
-                            // Status pill
+                            // Live Mesh health indicator badge
+                            val activeCount = activeNodes.size
                             Box(
                                 modifier = Modifier
                                     .clip(RoundedCornerShape(12.dp))
                                     .background(
                                         when {
                                             connectionStatus is MeshConnectionStatus.Reconnecting -> BlueChatAmber.copy(alpha = 0.2f)
-                                            isBtEnabled -> BlueChatGreen.copy(alpha = 0.15f)
-                                            else -> BlueChatAmber.copy(alpha = 0.15f)
+                                            activeCount > 0 -> BlueChatGreen.copy(alpha = 0.18f)
+                                            isBtEnabled -> BlueChatPrimary.copy(alpha = 0.12f)
+                                            else -> BlueChatAmber.copy(alpha = 0.18f)
                                         }
                                     )
                                     .clickable { if (!isBtEnabled) requestEnableBluetooth() }
@@ -230,22 +230,26 @@ fun ChatListScreen(
                                             .background(
                                                 when {
                                                     connectionStatus is MeshConnectionStatus.Reconnecting -> BlueChatAmber
-                                                    isBtEnabled -> BlueChatGreen
+                                                    activeCount > 0 -> BlueChatGreen
+                                                    isBtEnabled -> BlueChatPrimary
                                                     else -> BlueChatAmber
                                                 }
                                             )
                                     )
                                     Spacer(modifier = Modifier.width(5.dp))
                                     Text(
-                                        text = when (val status = connectionStatus) {
-                                            is MeshConnectionStatus.Reconnecting -> "Reconectando..."
-                                            else -> if (isBtEnabled) "En línea" else "Activar BT"
+                                        text = when {
+                                            connectionStatus is MeshConnectionStatus.Reconnecting -> "Reconectando..."
+                                            activeCount > 0 -> if (activeCount == 1) "1 nodo activo" else "$activeCount nodos activos"
+                                            isBtEnabled -> "Malla activa"
+                                            else -> "Activar BT"
                                         },
                                         fontSize = 11.sp,
                                         fontWeight = FontWeight.SemiBold,
                                         color = when {
                                             connectionStatus is MeshConnectionStatus.Reconnecting -> BlueChatAmber
-                                            isBtEnabled -> BlueChatGreen
+                                            activeCount > 0 -> BlueChatGreen
+                                            isBtEnabled -> BlueChatPrimary
                                             else -> BlueChatAmber
                                         }
                                     )
@@ -264,7 +268,7 @@ fun ChatListScreen(
                                     Row(verticalAlignment = Alignment.CenterVertically) {
                                         Icon(Icons.Default.WarningAmber, contentDescription = null, tint = BlueChatRed, modifier = Modifier.size(11.dp))
                                         Spacer(modifier = Modifier.width(3.dp))
-                                        Text("🚨 Emergencia", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = BlueChatRed)
+                                        Text("Emergencia", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = BlueChatRed)
                                     }
                                 }
                             }
@@ -416,7 +420,7 @@ fun ChatListScreen(
                     ChatListItem(
                         title = "Canal General",
                         subtitle = broadcastLatest?.text
-                            ?: (if (broadcastLatest?.audioFilePath != null) "🎤 Nota de voz" else "Canal abierto para todos los dispositivos"),
+                            ?: (if (broadcastLatest?.audioFilePath != null) "Nota de voz" else "Canal abierto para todos los dispositivos"),
                         time = formatTimestamp(broadcastLatest?.timestamp),
                         isBroadcast = true,
                         badgeColor = BlueChatPrimary,
@@ -535,7 +539,7 @@ fun ChatListScreen(
                     ChatListItem(
                         title = displayName,
                         subtitle = latestMsg?.text
-                            ?: (if (latestMsg?.audioFilePath != null) "🎤 Nota de voz" else "Toca para abrir la conversación"),
+                            ?: (if (latestMsg?.audioFilePath != null) "Nota de voz" else "Toca para abrir la conversación"),
                         time = formatTimestamp(latestMsg?.timestamp),
                         isBroadcast = false,
                         badgeColor = if (isOnline) BlueChatGreen else MaterialTheme.colorScheme.surfaceVariant,

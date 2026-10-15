@@ -285,7 +285,7 @@ fun PacketLogRow(log: PacketLogEntity) {
                 Spacer(modifier = Modifier.height(2.dp))
 
                 Text(
-                    text = "${log.sourceNodeId} ➔ ${log.destNodeId}",
+                    text = "${log.sourceNodeId} -> ${log.destNodeId}",
                     fontSize = 11.sp,
                     fontFamily = FontFamily.Monospace,
                     color = MaterialTheme.colorScheme.onSurface

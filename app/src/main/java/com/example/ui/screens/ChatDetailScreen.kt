@@ -32,23 +32,29 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material.icons.filled.Block
+import androidx.compose.material.icons.filled.Call
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.DeleteForever
 import androidx.compose.material.icons.filled.DeleteSweep
 import androidx.compose.material.icons.filled.DoneAll
+import androidx.compose.material.icons.filled.Hub
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.NearMe
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.PersonAdd
 import androidx.compose.material.icons.filled.Radar
-import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.RadioButtonUnchecked
 import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.SelectAll
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material.icons.filled.Videocam
 import androidx.compose.material.icons.filled.WarningAmber
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -82,6 +88,7 @@ import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -274,23 +281,25 @@ fun ChatDetailScreen(
                                 Row(verticalAlignment = Alignment.CenterVertically) {
                                     Box(
                                         modifier = Modifier
-                                            .size(6.dp)
+                                            .size(7.dp)
                                             .clip(CircleShape)
                                             .background(
                                                 when {
                                                     isEmergencyModeActive -> BlueChatRed
+                                                    peerNode?.isDirectConnected == true -> BlueChatGreen
                                                     existingContact != null -> BlueChatGreen
                                                     else -> BlueChatAmber
                                                 }
                                             )
                                     )
-                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Spacer(modifier = Modifier.width(5.dp))
                                     Text(
                                         text = when {
-                                            isEmergencyModeActive -> "🚨 Emergencia por Internet"
+                                            isEmergencyModeActive -> "Emergencia por Internet"
                                             isBroadcast -> "Malla Local • Canal Abierto"
+                                            peerNode?.isDirectConnected == true -> "En línea (Local) • Malla Directa"
                                             existingContact != null -> "Contacto Guardado • E2EE"
-                                            else -> "Dispositivo Cercano (Sin guardar)"
+                                            else -> "Dispositivo Cercano"
                                         },
                                         fontSize = 11.sp,
                                         fontWeight = if (isEmergencyModeActive) FontWeight.Bold else FontWeight.Normal,
@@ -316,6 +325,35 @@ fun ChatDetailScreen(
                         }
                     },
                     actions = {
+                        if (!isBroadcast) {
+                            IconButton(
+                                onClick = {
+                                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                    viewModel.startAudioCall(conversationId, title)
+                                },
+                                modifier = Modifier.testTag("audio_call_button")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Call,
+                                    contentDescription = "Llamada de audio",
+                                    tint = BlueChatPrimary
+                                )
+                            }
+                            IconButton(
+                                onClick = {
+                                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                    viewModel.startVideoCall(conversationId, title)
+                                },
+                                modifier = Modifier.testTag("video_call_button")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Videocam,
+                                    contentDescription = "Llamada de video",
+                                    tint = BlueChatPrimary
+                                )
+                            }
+                        }
+
                         if (!isBroadcast && existingContact == null) {
                             TextButton(
                                 onClick = {
@@ -442,6 +480,26 @@ fun ChatDetailScreen(
                         if (inputText.isNotBlank()) {
                             IconButton(
                                 onClick = {
+                                    viewModel.shareTextViaQuickShare(context, inputText)
+                                },
+                                modifier = Modifier
+                                    .size(46.dp)
+                                    .clip(CircleShape)
+                                    .background(MaterialTheme.colorScheme.surfaceVariant)
+                                    .testTag("quick_share_input_button")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Share,
+                                    contentDescription = "Quick Share",
+                                    tint = BlueChatPrimary,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
+
+                            Spacer(modifier = Modifier.width(6.dp))
+
+                            IconButton(
+                                onClick = {
                                     haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                                     viewModel.sendTextMessage(inputText)
                                     inputText = ""
@@ -460,6 +518,26 @@ fun ChatDetailScreen(
                                 )
                             }
                         } else {
+                            IconButton(
+                                onClick = {
+                                    viewModel.shareApkFile(context)
+                                },
+                                modifier = Modifier
+                                    .size(46.dp)
+                                    .clip(CircleShape)
+                                    .background(MaterialTheme.colorScheme.surfaceVariant)
+                                    .testTag("quick_share_peer_button")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Share,
+                                    contentDescription = "Quick Share APK / Enlace",
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
+
+                            Spacer(modifier = Modifier.width(6.dp))
+
                             IconButton(
                                 onClick = { handleMicClick() },
                                 modifier = Modifier
@@ -571,7 +649,7 @@ fun ChatDetailScreen(
 
     // Message options dialog: Delete for me, Delete for everyone, Select, Copy
     selectedMessageForOptions?.let { msg ->
-        val isDeletedText = msg.text == "🚫 Este mensaje fue eliminado"
+        val isDeletedText = msg.text?.contains("eliminado", ignoreCase = true) == true
         AlertDialog(
             onDismissRequest = { selectedMessageForOptions = null },
             title = { Text("Opciones del mensaje", fontWeight = FontWeight.Bold) },
@@ -589,6 +667,27 @@ fun ChatDetailScreen(
                             Icon(Icons.Default.ContentCopy, contentDescription = null, tint = BlueChatPrimary)
                             Spacer(modifier = Modifier.width(10.dp))
                             Text("Copiar texto", color = MaterialTheme.colorScheme.onSurface)
+                        }
+                    }
+
+                    if (!isDeletedText && (msg.text != null || msg.audioFilePath != null)) {
+                        TextButton(
+                            onClick = {
+                                if (msg.audioFilePath != null) {
+                                    viewModel.shareVoiceNote(context, msg.audioFilePath)
+                                } else if (msg.text != null) {
+                                    viewModel.shareTextViaQuickShare(context, msg.text)
+                                }
+                                selectedMessageForOptions = null
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Icon(Icons.Default.Share, contentDescription = null, tint = BlueChatPrimary)
+                            Spacer(modifier = Modifier.width(10.dp))
+                            Text(
+                                if (msg.audioFilePath != null) "Quick Share (Nota de voz)" else "Quick Share / Compartir",
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
                         }
                     }
 
@@ -646,7 +745,7 @@ fun ChatDetailScreen(
         val selectedEntities = remember(selectedMessageIds, messages) {
             messages.filter { it.id in selectedMessageIds }
         }
-        val hasOutgoing = selectedEntities.any { it.isOutgoing && it.text != "🚫 Este mensaje fue eliminado" }
+        val hasOutgoing = selectedEntities.any { it.isOutgoing && it.text?.contains("eliminado", ignoreCase = true) != true }
 
         AlertDialog(
             onDismissRequest = { showBatchDeleteDialog = false },
@@ -665,7 +764,7 @@ fun ChatDetailScreen(
                         Button(
                             onClick = {
                                 val outgoingPacketIds = selectedEntities
-                                    .filter { it.isOutgoing && it.text != "🚫 Este mensaje fue eliminado" }
+                                    .filter { it.isOutgoing && it.text?.contains("eliminado", ignoreCase = true) != true }
                                     .map { it.packetId }
                                 viewModel.deleteMultipleMessagesForEveryone(conversationId, outgoingPacketIds)
                                 viewModel.deleteMultipleMessagesForMe(selectedMessageIds.toList())
@@ -796,7 +895,7 @@ fun ChatMessageItem(
         RoundedCornerShape(topStart = 4.dp, topEnd = 16.dp, bottomStart = 16.dp, bottomEnd = 16.dp)
     }
 
-    val isDeleted = message.text == "🚫 Este mensaje fue eliminado"
+    val isDeleted = message.text?.contains("eliminado", ignoreCase = true) == true
 
     Row(
         modifier = Modifier
@@ -869,13 +968,45 @@ fun ChatMessageItem(
                             playerState = playerState,
                             onPlayClick = { onPlayAudio(message.audioFilePath) }
                         )
+                    } else if (isDeleted) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                imageVector = Icons.Default.Block,
+                                contentDescription = null,
+                                tint = if (isOut) Color.White.copy(alpha = 0.8f) else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f),
+                                modifier = Modifier.size(14.dp)
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                text = "Este mensaje fue eliminado",
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontStyle = FontStyle.Italic,
+                                color = if (isOut) Color.White.copy(alpha = 0.85f) else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.85f)
+                            )
+                        }
+                    } else if (message.text?.startsWith("Llamada perdida") == true) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                imageVector = if (message.text.contains("Video")) Icons.Default.Videocam else Icons.Default.Call,
+                                contentDescription = null,
+                                tint = if (isOut) Color.White else BlueChatRed,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = message.text,
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.SemiBold,
+                                color = if (isOut) Color.White else BlueChatRed
+                            )
+                        }
                     } else if (message.text != null) {
-                    Text(
-                        text = message.text,
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = if (isOut) Color.White else MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
+                        Text(
+                            text = message.text,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = if (isOut) Color.White else MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
 
                 Spacer(modifier = Modifier.height(3.dp))
 
@@ -884,6 +1015,37 @@ fun ChatMessageItem(
                     horizontalArrangement = Arrangement.End,
                     modifier = Modifier.align(Alignment.End)
                 ) {
+                    if (!isOut && !isDeleted) {
+                        val hopLabel = when {
+                            message.hopCount <= 1 -> "Direct"
+                            message.hopCount == 2 -> "1 Hop"
+                            else -> "${message.hopCount - 1} Hops"
+                        }
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(4.dp))
+                                .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
+                                .padding(horizontal = 4.dp, vertical = 1.dp)
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(
+                                    imageVector = if (message.hopCount <= 1) Icons.Default.NearMe else Icons.Default.Hub,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.75f),
+                                    modifier = Modifier.size(9.dp)
+                                )
+                                Spacer(modifier = Modifier.width(2.dp))
+                                Text(
+                                    text = hopLabel,
+                                    fontSize = 9.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.75f)
+                                )
+                            }
+                        }
+                        Spacer(modifier = Modifier.width(6.dp))
+                    }
+
                     Text(
                         text = formattedTime,
                         fontSize = 10.sp,

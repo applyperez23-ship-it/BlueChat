@@ -15,12 +15,13 @@ class MeshIdentityManager(context: Context) {
         private const val KEY_MAX_TTL = "max_ttl"
         private const val KEY_AUTO_RELAY = "auto_relay_enabled"
         private const val KEY_SIMULATOR_ENABLED = "simulator_enabled"
+        private const val KEY_BATTERY_SAVER = "battery_saver_enabled"
     }
 
     val deviceModel: String
         get() {
             val model = android.os.Build.MODEL ?: "Android"
-            return model.replace(Regex("[^a-zA-Z0-9]"), "").ifBlank { "Device" }.take(15)
+            return model.replace(Regex("[^a-zA-Z0-9-]"), "").ifBlank { "Device" }.take(15)
         }
 
     val macHash: String
@@ -45,8 +46,7 @@ class MeshIdentityManager(context: Context) {
         }
 
     /**
-     * Unique mesh identifier in format: device_model#username (or id#username)
-     * e.g., Pixel8#Alex or SMG991B#User
+     * Unique mesh identifier in format: device_model#username (e.g., Pixel8#Alex or SM-A20#daniel)
      */
     val nodeId: String
         get() = "$deviceModel#$userName"
@@ -62,4 +62,16 @@ class MeshIdentityManager(context: Context) {
     var isSimulatorEnabled: Boolean
         get() = prefs.getBoolean(KEY_SIMULATOR_ENABLED, false)
         set(value) = prefs.edit().putBoolean(KEY_SIMULATOR_ENABLED, value).apply()
+
+    var isBatterySaverEnabled: Boolean
+        get() = prefs.getBoolean(KEY_BATTERY_SAVER, false)
+        set(value) = prefs.edit().putBoolean(KEY_BATTERY_SAVER, value).apply()
+
+    var isUsernameVerified: Boolean
+        get() = prefs.getBoolean("is_username_verified", false)
+        set(value) = prefs.edit().putBoolean("is_username_verified", value).apply()
+
+    var verifiedUsername: String
+        get() = prefs.getString("verified_username", "") ?: ""
+        set(value) = prefs.edit().putString("verified_username", value).apply()
 }

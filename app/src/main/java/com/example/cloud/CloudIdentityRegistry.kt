@@ -135,7 +135,7 @@ class CloudIdentityRegistry(
                     return@withContext UsernameValidationResult.ClaimedByMe
                 } else {
                     return@withContext UsernameValidationResult.DuplicateRejected(
-                        "El identificador '$fullId' ya está registrado por otro dispositivo. Elige otro nombre de usuario."
+                        "Nombre de usuario ocupado, prueba otro."
                     )
                 }
             } else if (getResponse.code == 404) {

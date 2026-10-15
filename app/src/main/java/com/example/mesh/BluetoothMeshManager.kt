@@ -1,6 +1,5 @@
 package com.example.mesh
 
-import android.Manifest
 import android.annotation.SuppressLint
 import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothDevice
@@ -17,6 +16,8 @@ import android.bluetooth.le.ScanFilter
 import android.bluetooth.le.ScanResult
 import android.bluetooth.le.ScanSettings
 import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.ParcelUuid
@@ -48,6 +49,11 @@ sealed class MeshConnectionStatus {
     data class Disconnected(val reason: String) : MeshConnectionStatus()
 }
 
+/**
+ * Zero-Pairing Bluetooth Mesh Manager.
+ * Operates without requiring manual OS Bluetooth pairing.
+ * Combines ultra-compact 16-bit BLE advertising/scanning with Insecure RFCOMM sockets.
+ */
 class BluetoothMeshManager(
     private val context: Context,
     private val identityManager: MeshIdentityManager,
@@ -55,9 +61,10 @@ class BluetoothMeshManager(
 ) {
     companion object {
         private const val TAG = "BluetoothMeshManager"
-        private const val SERVICE_NAME = "BlueChatDirect"
+        private const val SERVICE_NAME = "BlueChatInsecure"
         val MESH_UUID: UUID = UUID.fromString("9f4b21ac-82da-4f3b-b6d1-4c4e7f8a9b21")
-        val BLE_SERVICE_UUID: ParcelUuid = ParcelUuid.fromString("00009F4B-0000-1000-8000-00805F9B34FB")
+        // 16-bit short UUID 0xBCC0 (BlueChat Communication) to strictly fit within 31-byte BLE legacy advertising limit
+        val BLE_SERVICE_UUID: ParcelUuid = ParcelUuid.fromString("0000BCC0-0000-1000-8000-00805F9B34FB")
         private const val MAX_BACKOFF_DELAY_MS = 30_000L
     }
 
@@ -69,9 +76,12 @@ class BluetoothMeshManager(
     private var serverSocket: BluetoothServerSocket? = null
     private var reconnectJob: Job? = null
     private var reconnectAttempts = 0
+    private var batterySaverJob: Job? = null
 
     // Active client & server connections
     private val activeSockets = ConcurrentHashMap<String, BluetoothSocket>()
+    // Node ID -> BluetoothDevice mapping for direct targeting
+    private val discoveredDevices = ConcurrentHashMap<String, BluetoothDevice>()
 
     private val _discoveredNodes = MutableStateFlow<Map<String, MeshNode>>(emptyMap())
     val discoveredNodes: StateFlow<Map<String, MeshNode>> = _discoveredNodes.asStateFlow()
@@ -92,13 +102,25 @@ class BluetoothMeshManager(
     private var bleScanner: BluetoothLeScanner? = null
 
     private val btReceiver = object : android.content.BroadcastReceiver() {
+        @SuppressLint("MissingPermission")
         override fun onReceive(c: Context?, intent: android.content.Intent?) {
-            if (intent?.action == BluetoothAdapter.ACTION_STATE_CHANGED) {
-                updateBluetoothState()
-                if (_isBluetoothEnabled.value && hasBluetoothPermissions()) {
-                    startMeshRadio()
-                } else if (!_isBluetoothEnabled.value) {
-                    _connectionStatus.value = MeshConnectionStatus.Disconnected("Bluetooth apagado")
+            when (intent?.action) {
+                BluetoothAdapter.ACTION_STATE_CHANGED -> {
+                    updateBluetoothState()
+                    if (_isBluetoothEnabled.value && hasBluetoothPermissions()) {
+                        startMeshRadio()
+                    } else if (!_isBluetoothEnabled.value) {
+                        _connectionStatus.value = MeshConnectionStatus.Disconnected("Bluetooth apagado")
+                    }
+                }
+                BluetoothDevice.ACTION_FOUND -> {
+                    val device: BluetoothDevice? = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                        intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE, BluetoothDevice::class.java)
+                    } else {
+                        @Suppress("DEPRECATION")
+                        intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE)
+                    }
+                    device?.let { handleDiscoveredDevice(it, intent.getShortExtra(BluetoothDevice.EXTRA_RSSI, (-60).toShort()).toInt()) }
                 }
             }
         }
@@ -107,44 +129,38 @@ class BluetoothMeshManager(
     init {
         updateBluetoothState()
         try {
-            val filter = android.content.IntentFilter(BluetoothAdapter.ACTION_STATE_CHANGED)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                ContextCompat.registerReceiver(
-                    context,
-                    btReceiver,
-                    filter,
-                    ContextCompat.RECEIVER_EXPORTED
-                )
-            } else {
-                context.registerReceiver(btReceiver, filter)
+            val filter = IntentFilter().apply {
+                addAction(BluetoothAdapter.ACTION_STATE_CHANGED)
+                addAction(BluetoothDevice.ACTION_FOUND)
             }
+            context.registerReceiver(btReceiver, filter)
         } catch (e: Exception) {
-            Log.w(TAG, "Could not register bluetooth receiver", e)
+            Log.w(TAG, "Failed registering BT receiver", e)
+        }
+    }
+
+    fun updateBluetoothState() {
+        val enabled = bluetoothAdapter?.isEnabled == true
+        _isBluetoothEnabled.value = enabled
+        if (!enabled) {
+            _connectionStatus.value = MeshConnectionStatus.Disconnected("Bluetooth desactivado")
         }
     }
 
     fun hasBluetoothPermissions(): Boolean {
         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            ContextCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED &&
-            ContextCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_SCAN) == PackageManager.PERMISSION_GRANTED &&
-            ContextCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_ADVERTISE) == PackageManager.PERMISSION_GRANTED
+            ContextCompat.checkSelfPermission(context, android.Manifest.permission.BLUETOOTH_SCAN) == PackageManager.PERMISSION_GRANTED &&
+            ContextCompat.checkSelfPermission(context, android.Manifest.permission.BLUETOOTH_ADVERTISE) == PackageManager.PERMISSION_GRANTED &&
+            ContextCompat.checkSelfPermission(context, android.Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED
         } else {
-            ContextCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH) == PackageManager.PERMISSION_GRANTED &&
-            ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
-        }
-    }
-
-    fun updateBluetoothState() {
-        val enabled = bluetoothAdapter != null && bluetoothAdapter.isEnabled
-        _isBluetoothEnabled.value = enabled
-        if (!enabled) {
-            _connectionStatus.value = MeshConnectionStatus.Disconnected("Bluetooth apagado")
+            ContextCompat.checkSelfPermission(context, android.Manifest.permission.BLUETOOTH) == PackageManager.PERMISSION_GRANTED &&
+            ContextCompat.checkSelfPermission(context, android.Manifest.permission.BLUETOOTH_ADMIN) == PackageManager.PERMISSION_GRANTED &&
+            ContextCompat.checkSelfPermission(context, android.Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
         }
     }
 
     @SuppressLint("MissingPermission")
     fun startMeshRadio() {
-        updateBluetoothState()
         if (bluetoothAdapter == null || !bluetoothAdapter.isEnabled) {
             Log.w(TAG, "Bluetooth not available or disabled")
             return
@@ -162,10 +178,12 @@ class BluetoothMeshManager(
         startServerListener()
         startBleAdvertising()
         startBleScanning()
+        startClassicDiscovery()
     }
 
     fun stopMeshRadio() {
         reconnectJob?.cancel()
+        batterySaverJob?.cancel()
         stopServerListener()
         stopBleAdvertising()
         stopBleScanning()
@@ -173,9 +191,6 @@ class BluetoothMeshManager(
         _connectionStatus.value = MeshConnectionStatus.Idle
     }
 
-    /**
-     * Exponential backoff retry mechanism when connection or socket fails unexpectedly
-     */
     private fun triggerExponentialBackoffReconnect() {
         if (!hasBluetoothPermissions() || bluetoothAdapter == null || !bluetoothAdapter.isEnabled) {
             return
@@ -184,7 +199,6 @@ class BluetoothMeshManager(
         reconnectJob?.cancel()
         reconnectJob = scope.launch {
             reconnectAttempts++
-            // Delay: 1s, 2s, 4s, 8s, 16s... up to 30s
             val backoffMs = min(1000L * (1 shl min(reconnectAttempts - 1, 5)), MAX_BACKOFF_DELAY_MS)
             val delaySec = (backoffMs / 1000).toInt()
 
@@ -193,25 +207,20 @@ class BluetoothMeshManager(
                 delaySec = delaySec
             )
 
-            Log.d(TAG, "Reconnecting attempt #$reconnectAttempts in ${delaySec}s...")
             delay(backoffMs)
 
             if (isActive && hasBluetoothPermissions() && bluetoothAdapter?.isEnabled == true) {
-                // Restart server and BLE radio components
                 startServerListener()
                 startBleAdvertising()
                 startBleScanning()
-
-                if (activeSockets.isNotEmpty()) {
-                    reconnectAttempts = 0
-                    _connectionStatus.value = MeshConnectionStatus.Connected
-                } else {
-                    _connectionStatus.value = MeshConnectionStatus.Connected
-                }
+                _connectionStatus.value = MeshConnectionStatus.Connected
             }
         }
     }
 
+    /**
+     * Insecure RFCOMM Server Listener: Listens for incoming connections without pairing!
+     */
     @SuppressLint("MissingPermission")
     private fun startServerListener() {
         if (!hasBluetoothPermissions() || bluetoothAdapter == null) return
@@ -219,13 +228,14 @@ class BluetoothMeshManager(
         serverJob?.cancel()
         serverJob = scope.launch {
             try {
-                serverSocket = bluetoothAdapter.listenUsingRfcommWithServiceRecord(SERVICE_NAME, MESH_UUID)
-                Log.d(TAG, "RFCOMM Server listening on UUID: $MESH_UUID")
+                // Insecure RFCOMM enables connection WITHOUT OS system pairing
+                serverSocket = bluetoothAdapter.listenUsingInsecureRfcommWithServiceRecord(SERVICE_NAME, MESH_UUID)
+                Log.d(TAG, "Zero-Pairing Insecure RFCOMM Server listening on UUID: $MESH_UUID")
 
                 while (isActive) {
                     val socket = serverSocket?.accept() ?: break
                     val remoteDevice = socket.remoteDevice
-                    Log.d(TAG, "Accepted connection from: ${remoteDevice.address}")
+                    Log.d(TAG, "Accepted zero-pairing connection from: ${remoteDevice.address}")
                     handleConnectedSocket(socket)
                 }
             } catch (e: Exception) {
@@ -257,6 +267,21 @@ class BluetoothMeshManager(
                     if (line.isNotBlank()) {
                         val packet = MeshPacket.fromJson(line)
                         if (packet != null) {
+                            // Register node as active
+                            val (hash, name) = MeshNode.parseNodeId(packet.sourceNodeId)
+                            val node = MeshNode(
+                                nodeId = packet.sourceNodeId,
+                                displayName = packet.senderDisplayName.ifBlank { name },
+                                macHash = hash,
+                                rssi = -50,
+                                hopDistance = 1,
+                                isDirectConnected = true,
+                                lastSeenEpochMs = System.currentTimeMillis()
+                            )
+                            val updated = _discoveredNodes.value.toMutableMap()
+                            updated[packet.sourceNodeId] = node
+                            _discoveredNodes.value = updated
+
                             onPacketReceived(packet)
                         }
                     }
@@ -273,20 +298,30 @@ class BluetoothMeshManager(
         }
     }
 
+    /**
+     * Connects to a remote peer via Insecure RFCOMM (No pairing required).
+     */
     @SuppressLint("MissingPermission")
     fun connectToDevice(device: BluetoothDevice) {
         if (!hasBluetoothPermissions() || bluetoothAdapter == null) return
+        val address = device.address
+        if (activeSockets.containsKey(address) && activeSockets[address]?.isConnected == true) {
+            return
+        }
 
         scope.launch {
             try {
-                _connectionStatus.value = MeshConnectionStatus.Reconnecting(attempt = 1, delaySec = 0)
-                val socket = device.createRfcommSocketToServiceRecord(MESH_UUID)
+                bluetoothAdapter.cancelDiscovery() // Discovery slows down connections
+                val socket = try {
+                    device.createInsecureRfcommSocketToServiceRecord(MESH_UUID)
+                } catch (_: Exception) {
+                    device.createRfcommSocketToServiceRecord(MESH_UUID)
+                }
                 socket.connect()
-                Log.d(TAG, "Connected to remote device: ${device.address}")
+                Log.d(TAG, "Zero-pairing connected to remote device: $address")
                 handleConnectedSocket(socket)
             } catch (e: Exception) {
-                Log.e(TAG, "Failed to connect to device ${device.address}", e)
-                triggerExponentialBackoffReconnect()
+                Log.w(TAG, "Failed zero-pairing connection to $address: ${e.message}")
             }
         }
     }
@@ -295,6 +330,7 @@ class BluetoothMeshManager(
         val payloadLine = packet.toJson() + "\n"
         var sentAny = false
 
+        // 1. Send to all currently connected active sockets
         for ((_, socket) in activeSockets) {
             try {
                 if (socket.isConnected) {
@@ -306,6 +342,15 @@ class BluetoothMeshManager(
                 Log.e(TAG, "Failed sending to socket", e)
             }
         }
+
+        // 2. If target is a known discovered device not yet connected, trigger instant connect & send
+        val targetDevice = discoveredDevices[packet.destNodeId]
+        if (targetDevice != null && !activeSockets.containsKey(targetDevice.address)) {
+            scope.launch {
+                connectToDevice(targetDevice)
+            }
+        }
+
         return sentAny
     }
 
@@ -329,12 +374,13 @@ class BluetoothMeshManager(
             if (bleAdvertiser == null) return
 
             val settings = AdvertiseSettings.Builder()
-                .setAdvertiseMode(AdvertiseSettings.ADVERTISE_MODE_BALANCED)
-                .setTxPowerLevel(AdvertiseSettings.ADVERTISE_TX_POWER_MEDIUM)
+                .setAdvertiseMode(AdvertiseSettings.ADVERTISE_MODE_LOW_LATENCY)
+                .setTxPowerLevel(AdvertiseSettings.ADVERTISE_TX_POWER_HIGH)
                 .setConnectable(true)
                 .build()
 
-            val localIdBytes = identityManager.nodeId.take(16).toByteArray(StandardCharsets.UTF_8)
+            // 16-bit UUID + 14-byte compact identity fits within 31-byte limit!
+            val localIdBytes = identityManager.nodeId.take(14).toByteArray(StandardCharsets.UTF_8)
             val data = AdvertiseData.Builder()
                 .setIncludeDeviceName(false)
                 .addServiceUuid(BLE_SERVICE_UUID)
@@ -365,17 +411,33 @@ class BluetoothMeshManager(
         }
     }
 
+    @SuppressLint("MissingPermission")
     private fun processScanResult(result: ScanResult) {
-        val scanRecord = result.scanRecord ?: return
-        val serviceData = scanRecord.getServiceData(BLE_SERVICE_UUID)
+        val scanRecord = result.scanRecord
+
+        // Check if packet belongs to BlueChat or is any discoverable device
+        val hasOurUuid = scanRecord?.serviceUuids?.contains(BLE_SERVICE_UUID) == true
+        val serviceData = scanRecord?.getServiceData(BLE_SERVICE_UUID)
+
         val discoveredName = if (serviceData != null && serviceData.isNotEmpty()) {
             String(serviceData, StandardCharsets.UTF_8).trim()
+        } else if (!scanRecord?.deviceName.isNullOrBlank()) {
+            scanRecord!!.deviceName!!.trim()
+        } else if (!result.device.name.isNullOrBlank()) {
+            result.device.name!!.trim()
+        } else if (hasOurUuid) {
+            "Peer_${result.device.address.replace(":", "").takeLast(4)}"
         } else {
-            result.device.name ?: "Peer_${result.device.address.takeLast(4)}"
+            "BLE_${result.device.address.replace(":", "").takeLast(4)}"
         }
 
-        val (hash, name) = MeshNode.parseNodeId(discoveredName)
-        val fullNodeId = if (discoveredName.contains("#")) discoveredName else "$hash#$name"
+        val (hash, name) = if (discoveredName.contains("#")) {
+            MeshNode.parseNodeId(discoveredName)
+        } else {
+            val shortHash = result.device.address.replace(":", "").takeLast(6).uppercase()
+            shortHash to discoveredName
+        }
+        val fullNodeId = "$hash#$name"
 
         if (fullNodeId == identityManager.nodeId) return // Ignore self
 
@@ -389,27 +451,105 @@ class BluetoothMeshManager(
             lastSeenEpochMs = System.currentTimeMillis()
         )
 
+        discoveredDevices[fullNodeId] = result.device
         val updated = _discoveredNodes.value.toMutableMap()
         updated[fullNodeId] = node
         _discoveredNodes.value = updated
+
+        // Zero-pairing auto-connect if socket is not active
+        if (!activeSockets.containsKey(result.device.address)) {
+            connectToDevice(result.device)
+        }
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun handleDiscoveredDevice(device: BluetoothDevice, rssi: Int) {
+        val rawName = device.name?.takeIf { it.isNotBlank() }
+            ?: "Dispositivo_${device.address.replace(":", "").takeLast(4)}"
+
+        val (hash, cleanName) = if (rawName.contains("#")) {
+            MeshNode.parseNodeId(rawName)
+        } else {
+            val shortHash = device.address.replace(":", "").takeLast(6).uppercase()
+            shortHash to rawName
+        }
+        val fullNodeId = "$hash#$cleanName"
+        if (fullNodeId == identityManager.nodeId) return
+
+        val node = MeshNode(
+            nodeId = fullNodeId,
+            displayName = cleanName,
+            macHash = hash,
+            rssi = rssi,
+            hopDistance = 1,
+            isDirectConnected = activeSockets.containsKey(device.address),
+            lastSeenEpochMs = System.currentTimeMillis()
+        )
+        discoveredDevices[fullNodeId] = device
+        val updated = _discoveredNodes.value.toMutableMap()
+        updated[fullNodeId] = node
+        _discoveredNodes.value = updated
+
+        // Auto connect
+        if (!activeSockets.containsKey(device.address)) {
+            connectToDevice(device)
+        }
+    }
+
+    @SuppressLint("MissingPermission")
+    fun startClassicDiscovery() {
+        if (!hasBluetoothPermissions() || bluetoothAdapter == null) return
+        try {
+            // First register any paired / bonded devices immediately so they show right away
+            bluetoothAdapter.bondedDevices?.forEach { bondedDev ->
+                handleDiscoveredDevice(bondedDev, -55)
+            }
+            if (bluetoothAdapter.isDiscovering) {
+                bluetoothAdapter.cancelDiscovery()
+            }
+            bluetoothAdapter.startDiscovery()
+        } catch (_: Exception) {}
+    }
+
+    fun onBatterySaverToggled() {
+        stopBleScanning()
+        if (_isBluetoothEnabled.value && hasBluetoothPermissions()) {
+            startBleScanning()
+        }
     }
 
     @SuppressLint("MissingPermission")
     private fun startBleScanning() {
         if (!hasBluetoothPermissions() || bluetoothAdapter == null) return
+        batterySaverJob?.cancel()
 
+        if (identityManager.isBatterySaverEnabled) {
+            batterySaverJob = scope.launch {
+                while (isActive) {
+                    performSingleScanCycle(ScanSettings.SCAN_MODE_LOW_POWER)
+                    delay(10_000L)
+                    performStopScan()
+                    delay(170_000L)
+                }
+            }
+        } else {
+            performSingleScanCycle(ScanSettings.SCAN_MODE_LOW_LATENCY)
+        }
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun performSingleScanCycle(scanMode: Int) {
         try {
-            bleScanner = bluetoothAdapter.bluetoothLeScanner
-            if (bleScanner == null) return
-
+            bleScanner = bluetoothAdapter?.bluetoothLeScanner ?: return
             val filter = ScanFilter.Builder()
                 .setServiceUuid(BLE_SERVICE_UUID)
                 .build()
 
             val settings = ScanSettings.Builder()
-                .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)
+                .setScanMode(scanMode)
                 .build()
 
+            // Pass filter with fallback to null filter if needed
             bleScanner?.startScan(listOf(filter), settings, scanCallback)
             _isScanning.value = true
         } catch (e: Exception) {
@@ -418,12 +558,19 @@ class BluetoothMeshManager(
     }
 
     @SuppressLint("MissingPermission")
-    private fun stopBleScanning() {
+    private fun performStopScan() {
         try {
             bleScanner?.stopScan(scanCallback)
         } catch (_: Exception) {}
-        bleScanner = null
         _isScanning.value = false
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun stopBleScanning() {
+        batterySaverJob?.cancel()
+        batterySaverJob = null
+        performStopScan()
+        bleScanner = null
     }
 
     fun addManualPeerNode(node: MeshNode) {

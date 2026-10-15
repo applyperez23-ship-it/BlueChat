@@ -16,7 +16,8 @@ import com.example.data.local.entities.ContactEntity
 import com.example.data.local.entities.MessageEntity
 import com.example.data.local.entities.PacketLogEntity
 import com.example.data.model.MeshNode
-import com.example.data.model.MeshPacket
+import com.example.call.CallState
+import com.example.call.CallType
 import com.example.mesh.MeshConnectionStatus
 import com.example.mesh.MeshEngine
 import com.example.mesh.MeshForegroundService
@@ -132,6 +133,20 @@ class MeshViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _isSimulatorEnabled = MutableStateFlow(identityManager.isSimulatorEnabled)
     val isSimulatorEnabled: StateFlow<Boolean> = _isSimulatorEnabled.asStateFlow()
+
+    private val _isBatterySaverEnabled = MutableStateFlow(identityManager.isBatterySaverEnabled)
+    val isBatterySaverEnabled: StateFlow<Boolean> = _isBatterySaverEnabled.asStateFlow()
+
+    // P2P Voice and Video Call State Flows
+    val callState: StateFlow<CallState> = repository.meshEngine.callManager.callState
+    val callType: StateFlow<CallType> = repository.meshEngine.callManager.callType
+    val callRemotePeerId: StateFlow<String?> = repository.meshEngine.callManager.remotePeerId
+    val callRemotePeerName: StateFlow<String> = repository.meshEngine.callManager.remotePeerName
+    val isCallMicMuted: StateFlow<Boolean> = repository.meshEngine.callManager.isMicMuted
+    val isCallSpeakerOn: StateFlow<Boolean> = repository.meshEngine.callManager.isSpeakerOn
+    val isCallFrontCamera: StateFlow<Boolean> = repository.meshEngine.callManager.isFrontCamera
+    val callDurationSec: StateFlow<Int> = repository.meshEngine.callManager.callDurationSec
+    val showCallWifiPrompt: StateFlow<Boolean> = repository.meshEngine.callManager.showWifiPrompt
 
     private var activeChatJob: Job? = null
 
@@ -363,6 +378,16 @@ class MeshViewModel(application: Application) : AndroidViewModel(application) {
         val sanitized = newUsername.trim().replace("#", "").take(20)
         if (sanitized.isBlank()) return
 
+        // If username is already verified and hasn't changed, skip network query
+        if (sanitized == identityManager.verifiedUsername && identityManager.isUsernameVerified) {
+            identityManager.userName = sanitized
+            _userName.value = identityManager.userName
+            _nodeId.value = identityManager.nodeId
+            showEditIdentityDialog.value = false
+            onResult(UsernameValidationResult.ClaimedByMe)
+            return
+        }
+
         viewModelScope.launch {
             val result = repository.cloudRegistry.verifyAndRegisterUsername(
                 deviceModel = identityManager.deviceModel,
@@ -373,6 +398,8 @@ class MeshViewModel(application: Application) : AndroidViewModel(application) {
                 is UsernameValidationResult.Available,
                 is UsernameValidationResult.ClaimedByMe -> {
                     identityManager.userName = sanitized
+                    identityManager.isUsernameVerified = true
+                    identityManager.verifiedUsername = sanitized
                     _userName.value = identityManager.userName
                     _nodeId.value = identityManager.nodeId
                     showEditIdentityDialog.value = false
@@ -411,6 +438,44 @@ class MeshViewModel(application: Application) : AndroidViewModel(application) {
         repository.meshEngine.refreshNodesWithSimulator()
     }
 
+    fun toggleBatterySaver(enabled: Boolean) {
+        identityManager.isBatterySaverEnabled = enabled
+        _isBatterySaverEnabled.value = enabled
+        repository.meshEngine.bluetoothManager.onBatterySaverToggled()
+    }
+
+    fun startAudioCall(peerId: String, peerName: String) {
+        repository.meshEngine.callManager.startCall(peerId, peerName, isVideo = false)
+    }
+
+    fun startVideoCall(peerId: String, peerName: String) {
+        repository.meshEngine.callManager.startCall(peerId, peerName, isVideo = true)
+    }
+
+    fun answerCall() {
+        repository.meshEngine.callManager.answerCall()
+    }
+
+    fun endCall() {
+        repository.meshEngine.callManager.endCall()
+    }
+
+    fun toggleCallMic() {
+        repository.meshEngine.callManager.toggleMic()
+    }
+
+    fun toggleCallSpeaker() {
+        repository.meshEngine.callManager.toggleSpeaker()
+    }
+
+    fun flipCallCamera() {
+        repository.meshEngine.callManager.flipCamera()
+    }
+
+    fun dismissCallWifiPrompt() {
+        repository.meshEngine.callManager.dismissWifiPrompt()
+    }
+
     fun triggerBroadcastBeacon() {
         repository.meshEngine.simulator.triggerSampleBroadcast()
     }
@@ -419,8 +484,9 @@ class MeshViewModel(application: Application) : AndroidViewModel(application) {
         if (MeshForegroundService.hasConnectedDevicePermissions(getApplication())) {
             MeshForegroundService.start(getApplication())
         }
-        repository.meshEngine.bluetoothManager.startMeshRadio()
-        repository.meshEngine.wifiDirectManager.startWifiDirectTransport()
+        repository.meshEngine.startMeshRadio()
+        repository.meshEngine.bluetoothManager.startClassicDiscovery()
+        repository.meshEngine.udpTransport.sendDiscoveryBeacon()
     }
 
     /**
@@ -465,6 +531,53 @@ class MeshViewModel(application: Application) : AndroidViewModel(application) {
             context.startActivity(chooser)
         } catch (e: Exception) {
             Toast.makeText(context, "Error al compartir APK: ${e.message}", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    /**
+     * Share voice note directly via Android Quick Share / System Share
+     */
+    fun shareVoiceNote(context: Context, audioFilePath: String) {
+        try {
+            val file = File(audioFilePath)
+            if (!file.exists()) {
+                Toast.makeText(context, "Archivo de audio no encontrado", Toast.LENGTH_SHORT).show()
+                return
+            }
+            val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+            val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                type = "audio/*"
+                putExtra(Intent.EXTRA_STREAM, uri)
+                putExtra(Intent.EXTRA_SUBJECT, "Nota de voz de BlueChat")
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            val chooser = Intent.createChooser(shareIntent, "Enviar con Quick Share o aplicación").apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            context.startActivity(chooser)
+        } catch (e: Exception) {
+            Toast.makeText(context, "Error al compartir nota de voz: ${e.message}", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    /**
+     * Share message text directly via Android Quick Share / System Share
+     */
+    fun shareTextViaQuickShare(context: Context, text: String) {
+        try {
+            val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                type = "text/plain"
+                putExtra(Intent.EXTRA_TEXT, text)
+                putExtra(Intent.EXTRA_SUBJECT, "Mensaje de BlueChat")
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            val chooser = Intent.createChooser(shareIntent, "Enviar con Quick Share o aplicación").apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            context.startActivity(chooser)
+        } catch (e: Exception) {
+            Toast.makeText(context, "Error al compartir mensaje: ${e.message}", Toast.LENGTH_SHORT).show()
         }
     }
 }

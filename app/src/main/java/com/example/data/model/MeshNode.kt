@@ -1,5 +1,11 @@
 package com.example.data.model
 
+enum class PresenceStatus {
+    ONLINE_LOCAL,
+    ONLINE_INTERNET,
+    OFFLINE
+}
+
 data class MeshNode(
     val nodeId: String,
     val displayName: String,
@@ -9,7 +15,8 @@ data class MeshNode(
     val isDirectConnected: Boolean = false,
     val lastSeenEpochMs: Long = System.currentTimeMillis(),
     val isSavedContact: Boolean = false,
-    val customAlias: String? = null
+    val customAlias: String? = null,
+    val presenceStatus: PresenceStatus = PresenceStatus.ONLINE_LOCAL
 ) {
     val effectiveName: String
         get() = customAlias?.takeIf { it.isNotBlank() } ?: displayName

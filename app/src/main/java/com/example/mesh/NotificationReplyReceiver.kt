@@ -53,7 +53,7 @@ class NotificationReplyReceiver : BroadcastReceiver() {
                 val repliedNotification = NotificationCompat.Builder(context, NotificationHelper.CHANNEL_MESSAGES_ID)
                     .setSmallIcon(android.R.drawable.stat_notify_chat)
                     .setContentTitle(senderName)
-                    .setContentText("✓ Enviado: $replyText")
+                    .setContentText("Enviado: $replyText")
                     .setPriority(NotificationCompat.PRIORITY_LOW)
                     .setTimeoutAfter(3500L)
                     .build()
