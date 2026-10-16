@@ -626,6 +626,13 @@ fun ChatDetailScreen(
                             }
                         },
                         onPlayAudio = { path -> viewModel.playAudio(path) },
+                        onCallBack = { isVideo ->
+                            if (isVideo) {
+                                viewModel.startVideoCall(conversationId, title)
+                            } else {
+                                viewModel.startAudioCall(conversationId, title)
+                            }
+                        },
                         onMessageLongClick = { msg ->
                             haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                             if (isSelectionMode) {
@@ -882,6 +889,7 @@ fun ChatMessageItem(
     isSelected: Boolean = false,
     onToggleSelect: () -> Unit = {},
     onPlayAudio: (String) -> Unit,
+    onCallBack: ((Boolean) -> Unit)? = null,
     onMessageLongClick: (MessageEntity) -> Unit = {}
 ) {
     val isOut = message.isOutgoing
@@ -985,20 +993,44 @@ fun ChatMessageItem(
                             )
                         }
                     } else if (message.text?.startsWith("Llamada perdida") == true) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(
-                                imageVector = if (message.text.contains("Video")) Icons.Default.Videocam else Icons.Default.Call,
-                                contentDescription = null,
-                                tint = if (isOut) Color.White else BlueChatRed,
-                                modifier = Modifier.size(16.dp)
-                            )
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text(
-                                text = message.text,
-                                style = MaterialTheme.typography.bodyMedium,
-                                fontWeight = FontWeight.SemiBold,
-                                color = if (isOut) Color.White else BlueChatRed
-                            )
+                        Column {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(
+                                    imageVector = if (message.text.contains("Video")) Icons.Default.Videocam else Icons.Default.Call,
+                                    contentDescription = null,
+                                    tint = if (isOut) Color.White else BlueChatRed,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    text = message.text,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = if (isOut) Color.White else BlueChatRed
+                                )
+                            }
+                            if (!isOut && onCallBack != null) {
+                                Spacer(modifier = Modifier.height(6.dp))
+                                val isVideo = message.text.contains("Video")
+                                Button(
+                                    onClick = { onCallBack(isVideo) },
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = BlueChatPrimary,
+                                        contentColor = Color.White
+                                    ),
+                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp),
+                                    shape = RoundedCornerShape(8.dp),
+                                    modifier = Modifier.height(30.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = if (isVideo) Icons.Default.Videocam else Icons.Default.Call,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(14.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text("Devolver llamada", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                }
+                            }
                         }
                     } else if (message.text != null) {
                         Text(

@@ -41,7 +41,7 @@ interface MessageDao {
     @Query("UPDATE messages SET text = 'Este mensaje fue eliminado' WHERE packetId = :packetId")
     suspend fun markMessageDeletedByPacketId(packetId: String)
 
-    @Query("DELETE FROM messages WHERE conversationId = :conversationId")
+    @Query("DELETE FROM messages WHERE conversationId = :conversationId OR senderNodeId = :conversationId OR recipientNodeId = :conversationId")
     suspend fun deleteConversation(conversationId: String)
 
     @Query("DELETE FROM messages")

@@ -550,6 +550,7 @@ fun ChatListScreen(
                         isSavedContact = isSavedContact,
                         isDiscoveredPeer = isDiscoveredPeer,
                         onSaveContact = if (isDiscoveredPeer && activeNode != null) { { viewModel.showAddContactNode.value = activeNode } } else null,
+                        onDelete = { chatToDelete = targetNodeId },
                         onClick = {
                             haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                             viewModel.openChat(
@@ -648,6 +649,7 @@ fun ChatListItem(
     isSavedContact: Boolean = false,
     isDiscoveredPeer: Boolean = false,
     onSaveContact: (() -> Unit)? = null,
+    onDelete: (() -> Unit)? = null,
     onLongClick: (() -> Unit)? = null,
     onClick: () -> Unit
 ) {
@@ -752,13 +754,29 @@ fun ChatListItem(
                     }
                 }
 
-                if (time.isNotBlank()) {
-                    Text(
-                        text = time,
-                        style = MaterialTheme.typography.bodySmall,
-                        fontSize = 11.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    if (time.isNotBlank()) {
+                        Text(
+                            text = time,
+                            style = MaterialTheme.typography.bodySmall,
+                            fontSize = 11.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    if (onDelete != null && !isBroadcast) {
+                        Spacer(modifier = Modifier.width(6.dp))
+                        IconButton(
+                            onClick = onDelete,
+                            modifier = Modifier.size(24.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Delete,
+                                contentDescription = "Eliminar chat",
+                                tint = BlueChatRed.copy(alpha = 0.6f),
+                                modifier = Modifier.size(15.dp)
+                            )
+                        }
+                    }
                 }
             }
 

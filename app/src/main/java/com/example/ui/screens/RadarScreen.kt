@@ -21,6 +21,7 @@ import androidx.compose.material.icons.automirrored.filled.Chat
 import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.BookmarkAdd
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Radar
 import androidx.compose.material.icons.filled.Refresh
@@ -35,6 +36,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.PrimaryTabRow
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Tab
@@ -84,6 +86,8 @@ fun RadarScreen(
 
     var selectedTab by remember { mutableIntStateOf(0) }
     var contactToDelete by remember { mutableStateOf<ContactEntity?>(null) }
+    var contactToEdit by remember { mutableStateOf<ContactEntity?>(null) }
+    var editedAliasText by remember { mutableStateOf("") }
 
     Scaffold(
         modifier = modifier.fillMaxSize(),
@@ -368,6 +372,23 @@ fun RadarScreen(
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
                                         IconButton(
+                                            onClick = {
+                                                contactToEdit = contact
+                                                editedAliasText = contact.customAlias
+                                            },
+                                            modifier = Modifier.size(36.dp)
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.Edit,
+                                                contentDescription = "Editar alias",
+                                                tint = BlueChatPrimary,
+                                                modifier = Modifier.size(18.dp)
+                                            )
+                                        }
+
+                                        Spacer(modifier = Modifier.width(6.dp))
+
+                                        IconButton(
                                             onClick = { contactToDelete = contact },
                                             modifier = Modifier.size(36.dp)
                                         ) {
@@ -406,6 +427,51 @@ fun RadarScreen(
                 }
             }
         }
+    }
+
+    // Edit contact alias dialog
+    contactToEdit?.let { contact ->
+        AlertDialog(
+            onDismissRequest = { contactToEdit = null },
+            icon = { Icon(Icons.Default.Edit, contentDescription = null, tint = BlueChatPrimary) },
+            title = { Text("Editar Alias del Contacto", fontWeight = FontWeight.Bold) },
+            text = {
+                Column {
+                    Text(
+                        text = "ID: ${contact.nodeId}",
+                        fontSize = 11.sp,
+                        fontFamily = FontFamily.Monospace,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(modifier = Modifier.height(10.dp))
+                    OutlinedTextField(
+                        value = editedAliasText,
+                        onValueChange = { editedAliasText = it },
+                        label = { Text("Alias o apodo local") },
+                        singleLine = true,
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        val alias = editedAliasText.trim().ifBlank { contact.originalDisplayName }
+                        viewModel.saveContact(contact.nodeId, alias, contact.originalDisplayName, contact.macHash)
+                        contactToEdit = null
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = BlueChatPrimary)
+                ) {
+                    Text("Guardar")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { contactToEdit = null }) {
+                    Text("Cancelar")
+                }
+            }
+        )
     }
 
     // Delete contact confirmation dialog
