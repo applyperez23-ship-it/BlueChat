@@ -1,0 +1,6 @@
+{
+  "summary": "Plan to fix message delivery across local mesh and internet (cloud relay), rename Emergency Mode to Extender el Alcance, overhaul audio/video calls with Wi-Fi range guidance, remove APK share button from chats, and ensure General Channel broadcast works seamlessly.",
+  "updatedAt": "2026-10-16T08:50:09.962313412Z",
+  "requestFeedback": true,
+  "userFacing": true
+}

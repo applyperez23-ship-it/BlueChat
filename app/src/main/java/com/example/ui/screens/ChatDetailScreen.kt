@@ -295,7 +295,7 @@ fun ChatDetailScreen(
                                     Spacer(modifier = Modifier.width(5.dp))
                                     Text(
                                         text = when {
-                                            isEmergencyModeActive -> "Emergencia por Internet"
+                                            isEmergencyModeActive -> "Alcance Extendido (Nube)"
                                             isBroadcast -> "Malla Local • Canal Abierto"
                                             peerNode?.isDirectConnected == true -> "En línea (Local) • Malla Directa"
                                             existingContact != null -> "Contacto Guardado • E2EE"
@@ -518,26 +518,6 @@ fun ChatDetailScreen(
                                 )
                             }
                         } else {
-                            IconButton(
-                                onClick = {
-                                    viewModel.shareApkFile(context)
-                                },
-                                modifier = Modifier
-                                    .size(46.dp)
-                                    .clip(CircleShape)
-                                    .background(MaterialTheme.colorScheme.surfaceVariant)
-                                    .testTag("quick_share_peer_button")
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Share,
-                                    contentDescription = "Quick Share APK / Enlace",
-                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    modifier = Modifier.size(20.dp)
-                                )
-                            }
-
-                            Spacer(modifier = Modifier.width(6.dp))
-
                             IconButton(
                                 onClick = { handleMicClick() },
                                 modifier = Modifier

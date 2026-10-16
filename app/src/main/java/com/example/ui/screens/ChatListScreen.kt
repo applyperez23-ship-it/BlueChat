@@ -261,14 +261,14 @@ fun ChatListScreen(
                                 Box(
                                     modifier = Modifier
                                         .clip(RoundedCornerShape(12.dp))
-                                        .background(BlueChatRed.copy(alpha = 0.18f))
+                                        .background(BlueChatPrimary.copy(alpha = 0.18f))
                                         .clickable { viewModel.showEmergencyUtilityDialog.value = true }
                                         .padding(horizontal = 7.dp, vertical = 3.dp)
                                 ) {
                                     Row(verticalAlignment = Alignment.CenterVertically) {
-                                        Icon(Icons.Default.WarningAmber, contentDescription = null, tint = BlueChatRed, modifier = Modifier.size(11.dp))
+                                        Icon(Icons.Default.CloudSync, contentDescription = null, tint = BlueChatPrimary, modifier = Modifier.size(11.dp))
                                         Spacer(modifier = Modifier.width(3.dp))
-                                        Text("Emergencia", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = BlueChatRed)
+                                        Text("Alcance Extendido", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = BlueChatPrimary)
                                     }
                                 }
                             }

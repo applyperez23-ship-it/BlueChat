@@ -156,7 +156,7 @@ fun EmergencyUtilityDialog(
                         fontWeight = FontWeight.Bold
                     )
                     Text(
-                        text = "Menú avanzado y modo de emergencia",
+                        text = "Menú de utilidades y extender alcance",
                         style = MaterialTheme.typography.bodySmall,
                         fontSize = 11.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -197,17 +197,17 @@ fun EmergencyUtilityDialog(
                     },
                     text = {
                         Text(
-                            "Emergencia",
-                            fontSize = 12.sp,
+                            "Extender Alcance",
+                            fontSize = 11.sp,
                             fontWeight = FontWeight.Bold,
-                            color = if (emergencyChatId != null) BlueChatRed else MaterialTheme.colorScheme.onSurface
+                            color = if (emergencyChatId != null) BlueChatPrimary else MaterialTheme.colorScheme.onSurface
                         )
                     },
                     icon = {
                         Icon(
-                            Icons.Default.WarningAmber,
+                            Icons.Default.CloudSync,
                             contentDescription = null,
-                            tint = if (emergencyChatId != null) BlueChatRed else MaterialTheme.colorScheme.onSurfaceVariant,
+                            tint = if (emergencyChatId != null) BlueChatPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.size(18.dp)
                         )
                     }
@@ -323,14 +323,14 @@ fun EmergencyUtilityDialog(
                                 Spacer(modifier = Modifier.width(10.dp))
                                 Column {
                                     Text(
-                                        text = "Modo de Emergencia por Internet",
+                                        text = "Modo Extender el Alcance (Internet/Nube)",
                                         fontWeight = FontWeight.Bold,
                                         fontSize = 12.sp,
-                                        color = BlueChatRed
+                                        color = BlueChatPrimary
                                     )
                                     Spacer(modifier = Modifier.height(2.dp))
                                     Text(
-                                        text = "Fuerza el enrutamiento de mensajes a través de la nube para el chat seleccionado. Se desactiva automáticamente al cerrar o reiniciar la aplicación (Auto-Reset).",
+                                        text = "Extiende la entrega de mensajes a través del buzón en la nube cuando la radio física directa o la malla local no tienen alcance.",
                                         fontSize = 11.sp,
                                         color = MaterialTheme.colorScheme.onSurface
                                     )
